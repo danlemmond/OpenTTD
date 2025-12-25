@@ -42,17 +42,6 @@
 
 #include "../safeguards.h"
 
-static const char *VehicleTypeToString(VehicleType type)
-{
-	switch (type) {
-		case VEH_TRAIN: return "train";
-		case VEH_ROAD: return "road";
-		case VEH_SHIP: return "ship";
-		case VEH_AIRCRAFT: return "aircraft";
-		default: return "unknown";
-	}
-}
-
 static nlohmann::json HandleVehicleStartStop(const nlohmann::json &params)
 {
 	if (!params.contains("vehicle_id")) {
@@ -395,7 +384,7 @@ static nlohmann::json HandleVehicleBuild(const nlohmann::json &params)
 		result["cost"] = cost.GetCost().base();
 		result["engine_id"] = engine_id.base();
 		result["engine_name"] = StrMakeValid(GetString(STR_ENGINE_NAME, engine_id));
-		result["vehicle_type"] = VehicleTypeToString(e->type);
+		result["vehicle_type"] = RpcVehicleTypeToString(e->type);
 
 		/* Fetch the newly created vehicle for more details */
 		const Vehicle *v = Vehicle::GetIfValid(new_veh_id);

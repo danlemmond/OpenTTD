@@ -51,17 +51,6 @@
 /* Forward declaration for news access */
 const NewsContainer &GetNews();
 
-static const char *VehicleTypeToString(VehicleType type)
-{
-	switch (type) {
-		case VEH_TRAIN: return "train";
-		case VEH_ROAD: return "road";
-		case VEH_SHIP: return "ship";
-		case VEH_AIRCRAFT: return "aircraft";
-		default: return "unknown";
-	}
-}
-
 static const char *VehicleStateToString(const Vehicle *v)
 {
 	/* Use First() since IsStoppedInDepot() requires primary vehicle */
@@ -80,24 +69,6 @@ static const char *LandscapeToString(LandscapeType landscape)
 		case LandscapeType::Arctic: return "arctic";
 		case LandscapeType::Tropic: return "tropic";
 		case LandscapeType::Toyland: return "toyland";
-		default: return "unknown";
-	}
-}
-
-static const char *TileTypeToString(TileType type)
-{
-	switch (type) {
-		case MP_CLEAR: return "clear";
-		case MP_RAILWAY: return "railway";
-		case MP_ROAD: return "road";
-		case MP_HOUSE: return "house";
-		case MP_TREES: return "trees";
-		case MP_INDUSTRY: return "industry";
-		case MP_STATION: return "station";
-		case MP_WATER: return "water";
-		case MP_VOID: return "void";
-		case MP_OBJECT: return "object";
-		case MP_TUNNELBRIDGE: return "tunnelbridge";
 		default: return "unknown";
 	}
 }
@@ -280,7 +251,7 @@ static nlohmann::json HandleVehicleList(const nlohmann::json &params)
 
 		nlohmann::json vehicle_json;
 		vehicle_json["id"] = v->index.base();
-		vehicle_json["type"] = VehicleTypeToString(v->type);
+		vehicle_json["type"] = RpcVehicleTypeToString(v->type);
 		vehicle_json["owner"] = v->owner != CompanyID::Invalid() ? v->owner.base() : -1;
 		vehicle_json["unit_number"] = v->unitnumber;
 		vehicle_json["name"] = StrMakeValid(GetString(STR_VEHICLE_NAME, v->index));
@@ -320,7 +291,7 @@ static nlohmann::json HandleVehicleGet(const nlohmann::json &params)
 
 	nlohmann::json result;
 	result["id"] = v->index.base();
-	result["type"] = VehicleTypeToString(v->type);
+	result["type"] = RpcVehicleTypeToString(v->type);
 	result["owner"] = v->owner != CompanyID::Invalid() ? v->owner.base() : -1;
 	result["name"] = StrMakeValid(GetString(STR_VEHICLE_NAME, v->index));
 	result["state"] = VehicleStateToString(v);
@@ -687,7 +658,7 @@ static nlohmann::json HandleTileGet(const nlohmann::json &params)
 	result["tile"] = tile.base();
 	result["x"] = TileX(tile);
 	result["y"] = TileY(tile);
-	result["type"] = TileTypeToString(GetTileType(tile));
+	result["type"] = RpcTileTypeToString(GetTileType(tile));
 	result["height"] = TileHeight(tile);
 
 	Slope slope = GetTileSlope(tile);
@@ -1016,7 +987,7 @@ static nlohmann::json HandleEngineList(const nlohmann::json &params)
 		nlohmann::json engine_json;
 		engine_json["id"] = e->index.base();
 		engine_json["name"] = StrMakeValid(GetString(STR_ENGINE_NAME, e->index));
-		engine_json["type"] = VehicleTypeToString(e->type);
+		engine_json["type"] = RpcVehicleTypeToString(e->type);
 		engine_json["buildable"] = is_buildable;
 
 		/* Cost and running cost */
@@ -1095,7 +1066,7 @@ static nlohmann::json HandleEngineGet(const nlohmann::json &params)
 	nlohmann::json result;
 	result["id"] = e->index.base();
 	result["name"] = StrMakeValid(GetString(STR_ENGINE_NAME, e->index));
-	result["type"] = VehicleTypeToString(e->type);
+	result["type"] = RpcVehicleTypeToString(e->type);
 	result["buildable"] = is_buildable;
 
 	/* Cost and running cost */
@@ -1742,7 +1713,7 @@ static nlohmann::json HandleVehicleGetCargoByType(const nlohmann::json &params)
 	nlohmann::json result;
 	result["id"] = v->index.base();
 	result["name"] = StrMakeValid(GetString(STR_VEHICLE_NAME, v->index));
-	result["type"] = VehicleTypeToString(v->type);
+	result["type"] = RpcVehicleTypeToString(v->type);
 
 	/* Aggregate cargo across all parts of the vehicle */
 	std::map<CargoType, std::pair<uint, uint>> cargo_data;  /* cargo -> (loaded, capacity) */

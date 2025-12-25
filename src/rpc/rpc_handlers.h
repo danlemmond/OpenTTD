@@ -12,7 +12,12 @@
 
 #include "rpc_server.h"
 #include "../tile_type.h"
+#include "../vehicle_type.h"
 #include <string>
+
+/* Shared utility functions for RPC handlers */
+const char *RpcTileTypeToString(TileType type);
+const char *RpcVehicleTypeToString(VehicleType type);
 
 /* Query handlers - rpc_handlers_query.cpp */
 void RpcRegisterQueryHandlers(RpcServer &server);

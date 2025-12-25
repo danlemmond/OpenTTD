@@ -9,8 +9,48 @@
 
 #include "../stdafx.h"
 #include "rpc_handlers.h"
+#include "../tile_map.h"
 
 #include "../safeguards.h"
+
+/**
+ * Convert a TileType to a human-readable string.
+ * @param type The tile type to convert.
+ * @return String representation of the tile type.
+ */
+const char *RpcTileTypeToString(TileType type)
+{
+	switch (type) {
+		case MP_CLEAR: return "clear";
+		case MP_RAILWAY: return "railway";
+		case MP_ROAD: return "road";
+		case MP_HOUSE: return "house";
+		case MP_TREES: return "trees";
+		case MP_INDUSTRY: return "industry";
+		case MP_STATION: return "station";
+		case MP_WATER: return "water";
+		case MP_VOID: return "void";
+		case MP_OBJECT: return "object";
+		case MP_TUNNELBRIDGE: return "tunnelbridge";
+		default: return "unknown";
+	}
+}
+
+/**
+ * Convert a VehicleType to a human-readable string.
+ * @param type The vehicle type to convert.
+ * @return String representation of the vehicle type.
+ */
+const char *RpcVehicleTypeToString(VehicleType type)
+{
+	switch (type) {
+		case VEH_TRAIN: return "train";
+		case VEH_ROAD: return "road";
+		case VEH_SHIP: return "ship";
+		case VEH_AIRCRAFT: return "aircraft";
+		default: return "unknown";
+	}
+}
 
 /**
  * Register all JSON-RPC handlers with the server.

@@ -33,24 +33,6 @@
 
 #include "../safeguards.h"
 
-static const char *TileTypeToString(TileType type)
-{
-	switch (type) {
-		case MP_CLEAR: return "clear";
-		case MP_RAILWAY: return "railway";
-		case MP_ROAD: return "road";
-		case MP_HOUSE: return "house";
-		case MP_TREES: return "trees";
-		case MP_INDUSTRY: return "industry";
-		case MP_STATION: return "station";
-		case MP_WATER: return "water";
-		case MP_VOID: return "void";
-		case MP_OBJECT: return "object";
-		case MP_TUNNELBRIDGE: return "tunnelbridge";
-		default: return "unknown";
-	}
-}
-
 /**
  * Parse a direction string to DiagDirection.
  * Valid values: "ne", "se", "sw", "nw" (or 0-3)
@@ -199,7 +181,7 @@ static nlohmann::json HandleTileGetRoadInfo(const nlohmann::json &params)
 	result["y"] = TileY(tile);
 
 	TileType tile_type = GetTileType(tile);
-	result["tile_type"] = TileTypeToString(tile_type);
+	result["tile_type"] = RpcTileTypeToString(tile_type);
 
 	/* Road information */
 	if (tile_type == MP_ROAD) {
