@@ -93,7 +93,7 @@ int HandleCompanyList(RpcClient &client, const CliOptions &opts)
 int HandleCompanyAlerts(RpcClient &client, const CliOptions &opts)
 {
 	try {
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		/* Optional company ID - default to 0 */
 		if (!opts.args.empty()) {
 			params["company"] = std::stoi(opts.args[0]);
@@ -153,7 +153,7 @@ int HandleCompanyAlerts(RpcClient &client, const CliOptions &opts)
 int HandleVehicleList(RpcClient &client, const CliOptions &opts)
 {
 	try {
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		if (!opts.args.empty()) {
 			params["type"] = opts.args[0];
 		}
@@ -201,7 +201,7 @@ int HandleVehicleGet(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("vehicle.get", params);
@@ -281,7 +281,7 @@ int HandleStationGet(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("station.get", params);
@@ -372,7 +372,7 @@ int HandleIndustryGet(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("industry.get", params);
@@ -452,7 +452,7 @@ int HandleMapDistance(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x1"] = std::stoi(opts.args[0]);
 		params["y1"] = std::stoi(opts.args[1]);
 		params["x2"] = std::stoi(opts.args[2]);
@@ -480,7 +480,7 @@ int HandleMapDistance(RpcClient &client, const CliOptions &opts)
 int HandleMapScan(RpcClient &client, const CliOptions &opts)
 {
 	try {
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 
 		/* Parse options from args */
 		bool show_traffic = false;
@@ -571,7 +571,7 @@ int HandleTileGet(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -643,7 +643,7 @@ int HandleTownGet(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("town.get", params);
@@ -691,7 +691,7 @@ int HandleOrderList(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["vehicle_id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("order.list", params);
@@ -835,7 +835,7 @@ int HandleCargoGetIncome(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 
 		/* Try to parse cargo as integer ID first, then fall back to name lookup */
 		int cargo_type = -1;
@@ -910,7 +910,7 @@ int HandleIndustryGetStockpile(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("industry.getStockpile", params);
@@ -945,7 +945,7 @@ int HandleIndustryGetAcceptance(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("industry.getAcceptance", params);
@@ -980,7 +980,7 @@ int HandleStationGetCargoFlow(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("station.getCargoPlanned", params);
@@ -1023,7 +1023,7 @@ int HandleStationCoverage(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("station.getCoverage", params);
@@ -1120,7 +1120,7 @@ int HandleVehicleGetCargoByType(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("vehicle.getCargoByType", params);
@@ -1162,7 +1162,7 @@ int HandleVehicleGetCargoByType(RpcClient &client, const CliOptions &opts)
 int HandleAirportInfo(RpcClient &client, const CliOptions &opts)
 {
 	try {
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		if (!opts.args.empty()) {
 			params["type"] = opts.args[0];
 		}
@@ -1221,7 +1221,7 @@ int HandleRouteCheck(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["start_tile"] = std::stoi(opts.args[0]);
 		params["end_tile"] = std::stoi(opts.args[1]);
 

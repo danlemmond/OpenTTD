@@ -19,7 +19,7 @@ int HandleTileRoadInfo(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -88,7 +88,7 @@ int HandleRoadBuild(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -138,7 +138,7 @@ int HandleRoadBuildDepot(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -190,7 +190,7 @@ int HandleRoadBuildStop(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -248,7 +248,7 @@ int HandleRailBuildTrack(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -303,7 +303,7 @@ int HandleRailBuildDepot(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -354,7 +354,7 @@ int HandleRailBuildStation(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -410,7 +410,7 @@ int HandleRailBuildSignal(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -473,7 +473,7 @@ int HandleRailRemoveSignal(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -523,7 +523,7 @@ int HandleMarineBuildDock(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -568,7 +568,7 @@ int HandleMarineBuildDepot(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -615,7 +615,7 @@ int HandleAirportBuild(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -665,7 +665,7 @@ int HandleRailBuildTrackLine(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["start_x"] = std::stoi(opts.args[0]);
 		params["start_y"] = std::stoi(opts.args[1]);
 		params["end_x"] = std::stoi(opts.args[2]);
@@ -724,7 +724,7 @@ int HandleRailSignalLine(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["start_x"] = std::stoi(opts.args[0]);
 		params["start_y"] = std::stoi(opts.args[1]);
 		params["end_x"] = std::stoi(opts.args[2]);
@@ -775,7 +775,7 @@ int HandleRailSignalLine(RpcClient &client, const CliOptions &opts)
 int HandleBridgeList(RpcClient &client, const CliOptions &opts)
 {
 	try {
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 
 		/* Parse options */
 		for (size_t i = 0; i < opts.args.size(); ++i) {
@@ -824,7 +824,7 @@ int HandleRailBuildBridge(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["start_x"] = std::stoi(opts.args[0]);
 		params["start_y"] = std::stoi(opts.args[1]);
 		params["end_x"] = std::stoi(opts.args[2]);
@@ -873,7 +873,7 @@ int HandleRoadBuildBridge(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["start_x"] = std::stoi(opts.args[0]);
 		params["start_y"] = std::stoi(opts.args[1]);
 		params["end_x"] = std::stoi(opts.args[2]);
@@ -923,7 +923,7 @@ int HandleRailBuildTunnel(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 
@@ -972,7 +972,7 @@ int HandleRoadBuildTunnel(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["x"] = std::stoi(opts.args[0]);
 		params["y"] = std::stoi(opts.args[1]);
 

@@ -13,7 +13,7 @@
 int HandleGameNewGame(RpcClient &client, const CliOptions &opts)
 {
 	try {
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 
 		/* Parse optional seed */
 		for (size_t i = 0; i < opts.args.size(); ++i) {
@@ -50,7 +50,7 @@ int HandleVehicleStartStop(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["vehicle_id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("vehicle.startstop", params);
@@ -86,7 +86,7 @@ int HandleVehicleDepot(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["vehicle_id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("vehicle.depot", params);
@@ -121,7 +121,7 @@ int HandleVehicleTurnaround(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["vehicle_id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("vehicle.turnaround", params);
@@ -158,7 +158,7 @@ int HandleOrderAppend(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["vehicle_id"] = std::stoi(opts.args[0]);
 
 		/* Parse --station, --load, --unload, --non-stop from args */
@@ -215,7 +215,7 @@ int HandleOrderRemove(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["vehicle_id"] = std::stoi(opts.args[0]);
 
 		/* Parse --index from args */
@@ -263,7 +263,7 @@ int HandleOrderInsert(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["vehicle_id"] = std::stoi(opts.args[0]);
 
 		for (size_t i = 1; i < opts.args.size(); ++i) {
@@ -319,7 +319,7 @@ int HandleOrderSetFlags(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["vehicle_id"] = std::stoi(opts.args[0]);
 
 		for (size_t i = 1; i < opts.args.size(); ++i) {
@@ -375,7 +375,7 @@ int HandleOrderShare(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["vehicle_id"] = std::stoi(opts.args[0]);
 		params["source_vehicle_id"] = std::stoi(opts.args[1]);
 
@@ -419,7 +419,7 @@ int HandleCompanySetLoan(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["amount"] = std::stoll(opts.args[0]);
 
 		for (size_t i = 1; i < opts.args.size(); ++i) {
@@ -461,7 +461,7 @@ int HandleVehicleRefit(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["vehicle_id"] = std::stoi(opts.args[0]);
 
 		for (size_t i = 1; i < opts.args.size(); ++i) {
@@ -512,7 +512,7 @@ int HandleTownPerformAction(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["town_id"] = std::stoi(opts.args[0]);
 
 		for (size_t i = 1; i < opts.args.size(); ++i) {
@@ -557,7 +557,7 @@ int HandleTownPerformAction(RpcClient &client, const CliOptions &opts)
 int HandleViewportGoto(RpcClient &client, const CliOptions &opts)
 {
 	try {
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 
 		/* Parse arguments - can be tile index or x y coordinates */
 		if (opts.args.size() >= 2) {
@@ -603,7 +603,7 @@ int HandleViewportGoto(RpcClient &client, const CliOptions &opts)
 int HandleViewportFollow(RpcClient &client, const CliOptions &opts)
 {
 	try {
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 
 		/* Check for --stop flag */
 		bool stop = false;

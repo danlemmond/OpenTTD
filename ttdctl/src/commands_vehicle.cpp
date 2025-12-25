@@ -13,7 +13,7 @@
 int HandleEngineList(RpcClient &client, const CliOptions &opts)
 {
 	try {
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 
 		/* Type filter from first arg */
 		if (!opts.args.empty() && opts.args[0][0] != '-') {
@@ -82,7 +82,7 @@ int HandleEngineGet(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["id"] = std::stoi(opts.args[0]);
 
 		auto result = client.Call("engine.get", params);
@@ -133,7 +133,7 @@ int HandleEngineGet(RpcClient &client, const CliOptions &opts)
 int HandleVehicleBuild(RpcClient &client, const CliOptions &opts)
 {
 	try {
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 
 		/* Parse depot and engine from args */
 		for (size_t i = 0; i < opts.args.size(); ++i) {
@@ -196,7 +196,7 @@ int HandleVehicleSell(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["vehicle_id"] = std::stoi(opts.args[0]);
 
 		/* Parse optional args */
@@ -236,7 +236,7 @@ int HandleVehicleClone(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["vehicle_id"] = std::stoi(opts.args[0]);
 
 		/* Parse options */
@@ -295,7 +295,7 @@ int HandleVehicleAttach(RpcClient &client, const CliOptions &opts)
 			return 1;
 		}
 
-		nlohmann::json params;
+		nlohmann::json params = nlohmann::json::object();
 		params["wagon_id"] = std::stoi(opts.args[0]);
 		params["train_id"] = std::stoi(opts.args[1]);
 
