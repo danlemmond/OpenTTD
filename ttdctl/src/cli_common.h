@@ -99,6 +99,11 @@ int HandleRailSignalLine(RpcClient &client, const CliOptions &opts);
 int HandleMarineBuildDock(RpcClient &client, const CliOptions &opts);
 int HandleMarineBuildDepot(RpcClient &client, const CliOptions &opts);
 int HandleAirportBuild(RpcClient &client, const CliOptions &opts);
+int HandleBridgeList(RpcClient &client, const CliOptions &opts);
+int HandleRailBuildBridge(RpcClient &client, const CliOptions &opts);
+int HandleRoadBuildBridge(RpcClient &client, const CliOptions &opts);
+int HandleRailBuildTunnel(RpcClient &client, const CliOptions &opts);
+int HandleRoadBuildTunnel(RpcClient &client, const CliOptions &opts);
 
 /* Vehicle management commands - commands_vehicle.cpp */
 int HandleEngineList(RpcClient &client, const CliOptions &opts);

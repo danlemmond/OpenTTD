@@ -181,6 +181,80 @@ ttdctl rail signal <x> <y> --track <type> --signal <signal_type>
 ttdctl rail signal 52 100 --track x --signal pbs
 ```
 
+### Bridge Construction
+
+Bridges allow rail to cross rivers, valleys, and other obstacles.
+
+```bash
+# List available bridge types
+ttdctl bridge list
+
+# Filter by required length
+ttdctl bridge list --length 8
+
+# Build a rail bridge
+ttdctl rail bridge <start_x> <start_y> <end_x> <end_y> [--type <bridge_id>]
+
+# Example: Build a bridge from (50,100) to (60,100)
+ttdctl rail bridge 50 100 60 100 --type 2
+```
+
+**Bridge Placement Requirements:**
+- Start and end tiles must be on elevated ground (bridge heads)
+- The span must be clear (water or lower terrain)
+- Bridges must be straight (horizontal or vertical only)
+- Use `ttdctl tile get` to check terrain heights
+- Different bridge types have minimum/maximum length constraints
+
+**When to Build Bridges:**
+- Crossing rivers or lakes
+- Spanning valleys between hills
+- Passing over roads or other rail lines
+- When a detour would be too long or expensive
+
+**Detecting the Need for a Bridge:**
+1. Use `ttdctl tile get <x> <y>` to check tile types along your planned route
+2. If you see `tile_type: water`, you need a bridge (or very long detour)
+3. If terrain height varies significantly, consider a bridge or tunnel
+
+### Tunnel Construction
+
+Tunnels allow rail to pass through mountains and hills.
+
+```bash
+# Build a rail tunnel (entrance)
+ttdctl rail tunnel <x> <y>
+
+# Example: Build a tunnel starting at (50,100)
+ttdctl rail tunnel 50 100
+```
+
+**Tunnel Placement Requirements:**
+- The entrance tile must be at the base of a slope facing INTO the hill
+- The tunnel automatically extends to the other side
+- Both ends must be at the same height
+- The exit location is returned by the command
+
+**When to Build Tunnels:**
+- Passing through mountains or large hills
+- When going over would be too steep or long
+- When a bridge isn't possible (no valley, solid ground)
+
+**Detecting the Need for a Tunnel:**
+1. Use `ttdctl tile get <x> <y>` to check terrain along your route
+2. If tile heights increase significantly, you may need a tunnel
+3. Look for `height` values that would require multiple level changes
+4. If `tile_type: tunnelbridge` exists, there's already a tunnel/bridge there
+
+**Example: Surveying Terrain for Bridges/Tunnels:**
+```bash
+# Check tiles along a planned route
+ttdctl tile get 50 100
+ttdctl tile get 51 100
+ttdctl tile get 52 100
+# If heights vary or water is found, plan accordingly
+```
+
 ---
 
 ## Removing Infrastructure
@@ -526,6 +600,9 @@ ttdctl rail station <x> <y> --axis <x|y> --platforms <n> --length <n>
 ttdctl rail depot <x> <y> --direction <dir>
 ttdctl rail signal <x> <y> --track <type> --signal <signal_type>
 ttdctl rail signal-line <start_x> <start_y> <end_x> <end_y>  # Bulk signals
+ttdctl rail bridge <start_x> <start_y> <end_x> <end_y> [--type <id>]  # Build bridge
+ttdctl rail tunnel <x> <y>                                  # Build tunnel
+ttdctl bridge list [--length <n>]                           # List bridge types
 ```
 
 ### Vehicles

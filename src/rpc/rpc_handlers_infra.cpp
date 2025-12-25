@@ -22,6 +22,9 @@
 #include "../signal_type.h"
 #include "../direction_func.h"
 #include "../water_cmd.h"
+#include "../tunnelbridge_cmd.h"
+#include "../tunnelbridge.h"
+#include "../bridge.h"
 #include "../airport.h"
 #include "../newgrf_station.h"
 #include "../newgrf_roadstop.h"
@@ -1470,6 +1473,346 @@ static nlohmann::json HandleAirportBuild(const nlohmann::json &params)
 	return result;
 }
 
+/**
+ * Handler for bridge.list - List available bridge types.
+ *
+ * Parameters:
+ *   length: Required bridge length in tiles (optional, filters by availability)
+ *
+ * Returns:
+ *   bridges: Array of available bridge types with specs
+ */
+static nlohmann::json HandleBridgeList(const nlohmann::json &params)
+{
+	uint min_length = params.value("length", 0);
+
+	nlohmann::json bridges = nlohmann::json::array();
+
+	for (BridgeType i = 0; i < MAX_BRIDGES; i++) {
+		const BridgeSpec *spec = GetBridgeSpec(i);
+		if (spec == nullptr || spec->avail_year > TimerGameCalendar::year) continue;
+
+		/* Check length constraints if specified */
+		if (min_length > 0) {
+			if (min_length < spec->min_length || min_length > spec->max_length) continue;
+		}
+
+		nlohmann::json bridge;
+		bridge["id"] = i;
+		bridge["name"] = StrMakeValid(GetString(spec->material));
+		bridge["min_length"] = spec->min_length;
+		bridge["max_length"] = spec->max_length == UINT16_MAX ? 0 : spec->max_length;  /* 0 = unlimited */
+		bridge["speed"] = spec->speed;  /* km/h */
+		bridge["available_year"] = spec->avail_year.base();
+
+		bridges.push_back(bridge);
+	}
+
+	nlohmann::json result;
+	result["bridges"] = bridges;
+	return result;
+}
+
+/**
+ * Handler for rail.buildBridge - Build a rail bridge.
+ *
+ * Parameters:
+ *   start_x, start_y: Start tile coordinates (one end of bridge)
+ *   end_x, end_y: End tile coordinates (other end of bridge)
+ *   bridge_type: Bridge type ID (0-12, use bridge.list to see options)
+ *   rail_type: Rail type (default: 0)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the bridge was built
+ *   start_tile, end_tile: The bridge endpoints
+ *   cost: Construction cost
+ */
+static nlohmann::json HandleRailBuildBridge(const nlohmann::json &params)
+{
+	if (!params.contains("start_x") || !params.contains("start_y") ||
+	    !params.contains("end_x") || !params.contains("end_y")) {
+		throw std::runtime_error("Missing required parameters: start_x, start_y, end_x, end_y");
+	}
+
+	uint start_x = params["start_x"].get<uint>();
+	uint start_y = params["start_y"].get<uint>();
+	uint end_x = params["end_x"].get<uint>();
+	uint end_y = params["end_y"].get<uint>();
+
+	if (start_x >= Map::SizeX() || start_y >= Map::SizeY() ||
+	    end_x >= Map::SizeX() || end_y >= Map::SizeY()) {
+		throw std::runtime_error("Coordinates out of bounds");
+	}
+
+	TileIndex start_tile = TileXY(start_x, start_y);
+	TileIndex end_tile = TileXY(end_x, end_y);
+
+	BridgeType bridge_type = params.value("bridge_type", 0);
+	if (bridge_type >= MAX_BRIDGES) {
+		throw std::runtime_error("Invalid bridge_type: must be 0-12");
+	}
+
+	RailType railtype = static_cast<RailType>(params.value("rail_type", 0));
+
+	/* Set company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	CommandCost cost = Command<CMD_BUILD_BRIDGE>::Do(flags, end_tile, start_tile,
+		TRANSPORT_RAIL, bridge_type, railtype);
+
+	cur_company.Restore();
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(start_tile, "rail.buildBridge");
+		RpcRecordActivity(end_tile, "rail.buildBridge");
+	}
+
+	nlohmann::json result;
+	result["success"] = cost.Succeeded();
+	result["start_tile"] = start_tile.base();
+	result["end_tile"] = end_tile.base();
+	result["start_x"] = start_x;
+	result["start_y"] = start_y;
+	result["end_x"] = end_x;
+	result["end_y"] = end_y;
+	result["cost"] = cost.GetCost().base();
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to build bridge - check endpoints are valid, terrain allows bridging, and bridge type supports the length";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for road.buildBridge - Build a road bridge.
+ *
+ * Parameters:
+ *   start_x, start_y: Start tile coordinates (one end of bridge)
+ *   end_x, end_y: End tile coordinates (other end of bridge)
+ *   bridge_type: Bridge type ID (0-12, use bridge.list to see options)
+ *   road_type: Road type (default: 0)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the bridge was built
+ *   start_tile, end_tile: The bridge endpoints
+ *   cost: Construction cost
+ */
+static nlohmann::json HandleRoadBuildBridge(const nlohmann::json &params)
+{
+	if (!params.contains("start_x") || !params.contains("start_y") ||
+	    !params.contains("end_x") || !params.contains("end_y")) {
+		throw std::runtime_error("Missing required parameters: start_x, start_y, end_x, end_y");
+	}
+
+	uint start_x = params["start_x"].get<uint>();
+	uint start_y = params["start_y"].get<uint>();
+	uint end_x = params["end_x"].get<uint>();
+	uint end_y = params["end_y"].get<uint>();
+
+	if (start_x >= Map::SizeX() || start_y >= Map::SizeY() ||
+	    end_x >= Map::SizeX() || end_y >= Map::SizeY()) {
+		throw std::runtime_error("Coordinates out of bounds");
+	}
+
+	TileIndex start_tile = TileXY(start_x, start_y);
+	TileIndex end_tile = TileXY(end_x, end_y);
+
+	BridgeType bridge_type = params.value("bridge_type", 0);
+	if (bridge_type >= MAX_BRIDGES) {
+		throw std::runtime_error("Invalid bridge_type: must be 0-12");
+	}
+
+	RoadType roadtype = static_cast<RoadType>(params.value("road_type", 0));
+
+	/* Set company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	CommandCost cost = Command<CMD_BUILD_BRIDGE>::Do(flags, end_tile, start_tile,
+		TRANSPORT_ROAD, bridge_type, roadtype);
+
+	cur_company.Restore();
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(start_tile, "road.buildBridge");
+		RpcRecordActivity(end_tile, "road.buildBridge");
+	}
+
+	nlohmann::json result;
+	result["success"] = cost.Succeeded();
+	result["start_tile"] = start_tile.base();
+	result["end_tile"] = end_tile.base();
+	result["start_x"] = start_x;
+	result["start_y"] = start_y;
+	result["end_x"] = end_x;
+	result["end_y"] = end_y;
+	result["cost"] = cost.GetCost().base();
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to build bridge - check endpoints are valid, terrain allows bridging, and bridge type supports the length";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for rail.buildTunnel - Build a rail tunnel.
+ *
+ * The tunnel automatically extends through the mountain to the other side.
+ * The start tile must be at the base of a slope facing into the mountain.
+ *
+ * Parameters:
+ *   x, y: Start tile coordinates (tunnel entrance)
+ *   rail_type: Rail type (default: 0)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the tunnel was built
+ *   start_tile: Tunnel entrance
+ *   end_tile: Tunnel exit (automatically determined)
+ *   cost: Construction cost
+ */
+static nlohmann::json HandleRailBuildTunnel(const nlohmann::json &params)
+{
+	if (!params.contains("x") || !params.contains("y")) {
+		throw std::runtime_error("Missing required parameters: x, y");
+	}
+
+	uint x = params["x"].get<uint>();
+	uint y = params["y"].get<uint>();
+
+	if (x >= Map::SizeX() || y >= Map::SizeY()) {
+		throw std::runtime_error("Coordinates out of bounds");
+	}
+
+	TileIndex start_tile = TileXY(x, y);
+	RailType railtype = static_cast<RailType>(params.value("rail_type", 0));
+
+	/* Set company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	CommandCost cost = Command<CMD_BUILD_TUNNEL>::Do(flags, start_tile, TRANSPORT_RAIL, railtype);
+
+	cur_company.Restore();
+
+	/* Get the end tile - it's stored in a global after successful build */
+	TileIndex end_tile = _build_tunnel_endtile;
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(start_tile, "rail.buildTunnel");
+		if (IsValidTile(end_tile)) {
+			RpcRecordActivity(end_tile, "rail.buildTunnel");
+		}
+	}
+
+	nlohmann::json result;
+	result["success"] = cost.Succeeded();
+	result["start_tile"] = start_tile.base();
+	result["start_x"] = x;
+	result["start_y"] = y;
+	result["cost"] = cost.GetCost().base();
+
+	if (cost.Succeeded() && IsValidTile(end_tile)) {
+		result["end_tile"] = end_tile.base();
+		result["end_x"] = TileX(end_tile);
+		result["end_y"] = TileY(end_tile);
+	}
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to build tunnel - tile must be at base of slope facing into a hill";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for road.buildTunnel - Build a road tunnel.
+ *
+ * The tunnel automatically extends through the mountain to the other side.
+ * The start tile must be at the base of a slope facing into the mountain.
+ *
+ * Parameters:
+ *   x, y: Start tile coordinates (tunnel entrance)
+ *   road_type: Road type (default: 0)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the tunnel was built
+ *   start_tile: Tunnel entrance
+ *   end_tile: Tunnel exit (automatically determined)
+ *   cost: Construction cost
+ */
+static nlohmann::json HandleRoadBuildTunnel(const nlohmann::json &params)
+{
+	if (!params.contains("x") || !params.contains("y")) {
+		throw std::runtime_error("Missing required parameters: x, y");
+	}
+
+	uint x = params["x"].get<uint>();
+	uint y = params["y"].get<uint>();
+
+	if (x >= Map::SizeX() || y >= Map::SizeY()) {
+		throw std::runtime_error("Coordinates out of bounds");
+	}
+
+	TileIndex start_tile = TileXY(x, y);
+	RoadType roadtype = static_cast<RoadType>(params.value("road_type", 0));
+
+	/* Set company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	CommandCost cost = Command<CMD_BUILD_TUNNEL>::Do(flags, start_tile, TRANSPORT_ROAD, roadtype);
+
+	cur_company.Restore();
+
+	/* Get the end tile - it's stored in a global after successful build */
+	TileIndex end_tile = _build_tunnel_endtile;
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(start_tile, "road.buildTunnel");
+		if (IsValidTile(end_tile)) {
+			RpcRecordActivity(end_tile, "road.buildTunnel");
+		}
+	}
+
+	nlohmann::json result;
+	result["success"] = cost.Succeeded();
+	result["start_tile"] = start_tile.base();
+	result["start_x"] = x;
+	result["start_y"] = y;
+	result["cost"] = cost.GetCost().base();
+
+	if (cost.Succeeded() && IsValidTile(end_tile)) {
+		result["end_tile"] = end_tile.base();
+		result["end_x"] = TileX(end_tile);
+		result["end_y"] = TileY(end_tile);
+	}
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to build tunnel - tile must be at base of slope facing into a hill";
+	}
+
+	return result;
+}
+
 void RpcRegisterInfraHandlers(RpcServer &server)
 {
 	server.RegisterHandler("tile.getRoadInfo", HandleTileGetRoadInfo);
@@ -1486,4 +1829,9 @@ void RpcRegisterInfraHandlers(RpcServer &server)
 	server.RegisterHandler("marine.buildDock", HandleMarineBuildDock);
 	server.RegisterHandler("marine.buildDepot", HandleMarineBuildDepot);
 	server.RegisterHandler("airport.build", HandleAirportBuild);
+	server.RegisterHandler("bridge.list", HandleBridgeList);
+	server.RegisterHandler("rail.buildBridge", HandleRailBuildBridge);
+	server.RegisterHandler("road.buildBridge", HandleRoadBuildBridge);
+	server.RegisterHandler("rail.buildTunnel", HandleRailBuildTunnel);
+	server.RegisterHandler("road.buildTunnel", HandleRoadBuildTunnel);
 }

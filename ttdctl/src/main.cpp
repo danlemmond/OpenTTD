@@ -118,6 +118,10 @@ int main(int argc, char *argv[])
 			return HandleRoadBuildDepot(client, opts);
 		} else if (opts.action == "stop") {
 			return HandleRoadBuildStop(client, opts);
+		} else if (opts.action == "bridge") {
+			return HandleRoadBuildBridge(client, opts);
+		} else if (opts.action == "tunnel") {
+			return HandleRoadBuildTunnel(client, opts);
 		}
 	} else if (opts.resource == "rail") {
 		if (opts.action == "track") {
@@ -134,6 +138,14 @@ int main(int argc, char *argv[])
 			return HandleRailBuildTrackLine(client, opts);
 		} else if (opts.action == "signal-line") {
 			return HandleRailSignalLine(client, opts);
+		} else if (opts.action == "bridge") {
+			return HandleRailBuildBridge(client, opts);
+		} else if (opts.action == "tunnel") {
+			return HandleRailBuildTunnel(client, opts);
+		}
+	} else if (opts.resource == "bridge") {
+		if (opts.action == "list" || opts.action.empty()) {
+			return HandleBridgeList(client, opts);
 		}
 	} else if (opts.resource == "marine") {
 		if (opts.action == "dock") {

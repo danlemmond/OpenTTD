@@ -771,3 +771,241 @@ int HandleRailSignalLine(RpcClient &client, const CliOptions &opts)
 		return 1;
 	}
 }
+
+int HandleBridgeList(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		nlohmann::json params;
+
+		/* Parse options */
+		for (size_t i = 0; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--length" && i + 1 < opts.args.size()) {
+				params["length"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		auto result = client.Call("bridge.list", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << "Available Bridges\n";
+		std::cout << "-----------------\n";
+
+		for (const auto &bridge : result["bridges"]) {
+			std::cout << "ID " << bridge["id"].get<int>() << ": " << bridge["name"].get<std::string>() << "\n";
+			std::cout << "  Length: " << bridge["min_length"].get<int>() << "-";
+			if (bridge["max_length"].get<int>() == 0) {
+				std::cout << "unlimited";
+			} else {
+				std::cout << bridge["max_length"].get<int>();
+			}
+			std::cout << " tiles\n";
+			std::cout << "  Speed: " << bridge["speed"].get<int>() << " km/h\n";
+			std::cout << "\n";
+		}
+
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+int HandleRailBuildBridge(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 4) {
+			std::cerr << "Error: start and end coordinates required\n";
+			std::cerr << "Usage: ttdctl rail bridge <start_x> <start_y> <end_x> <end_y> [--type <bridge_id>]\n";
+			std::cerr << "Use 'ttdctl bridge list' to see available bridge types.\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["start_x"] = std::stoi(opts.args[0]);
+		params["start_y"] = std::stoi(opts.args[1]);
+		params["end_x"] = std::stoi(opts.args[2]);
+		params["end_y"] = std::stoi(opts.args[3]);
+
+		/* Parse options */
+		for (size_t i = 4; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--type" && i + 1 < opts.args.size()) {
+				params["bridge_type"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		auto result = client.Call("rail.buildBridge", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built rail bridge from (" << result["start_x"].get<int>()
+			          << ", " << result["start_y"].get<int>() << ") to ("
+			          << result["end_x"].get<int>() << ", " << result["end_y"].get<int>() << ")"
+			          << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build bridge: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+int HandleRoadBuildBridge(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 4) {
+			std::cerr << "Error: start and end coordinates required\n";
+			std::cerr << "Usage: ttdctl road bridge <start_x> <start_y> <end_x> <end_y> [--type <bridge_id>]\n";
+			std::cerr << "Use 'ttdctl bridge list' to see available bridge types.\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["start_x"] = std::stoi(opts.args[0]);
+		params["start_y"] = std::stoi(opts.args[1]);
+		params["end_x"] = std::stoi(opts.args[2]);
+		params["end_y"] = std::stoi(opts.args[3]);
+
+		/* Parse options */
+		for (size_t i = 4; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--type" && i + 1 < opts.args.size()) {
+				params["bridge_type"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		auto result = client.Call("road.buildBridge", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built road bridge from (" << result["start_x"].get<int>()
+			          << ", " << result["start_y"].get<int>() << ") to ("
+			          << result["end_x"].get<int>() << ", " << result["end_y"].get<int>() << ")"
+			          << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build bridge: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+int HandleRailBuildTunnel(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl rail tunnel <x> <y>\n";
+			std::cerr << "The tile must be at the base of a slope facing into a hill.\n";
+			std::cerr << "The tunnel exit is automatically determined.\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		/* Parse options */
+		for (size_t i = 2; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		auto result = client.Call("rail.buildTunnel", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built rail tunnel from (" << result["start_x"].get<int>()
+			          << ", " << result["start_y"].get<int>() << ")";
+			if (result.contains("end_x")) {
+				std::cout << " to (" << result["end_x"].get<int>()
+				          << ", " << result["end_y"].get<int>() << ")";
+			}
+			std::cout << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build tunnel: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+int HandleRoadBuildTunnel(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl road tunnel <x> <y>\n";
+			std::cerr << "The tile must be at the base of a slope facing into a hill.\n";
+			std::cerr << "The tunnel exit is automatically determined.\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		/* Parse options */
+		for (size_t i = 2; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		auto result = client.Call("road.buildTunnel", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built road tunnel from (" << result["start_x"].get<int>()
+			          << ", " << result["start_y"].get<int>() << ")";
+			if (result.contains("end_x")) {
+				std::cout << " to (" << result["end_x"].get<int>()
+				          << ", " << result["end_y"].get<int>() << ")";
+			}
+			std::cout << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build tunnel: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
