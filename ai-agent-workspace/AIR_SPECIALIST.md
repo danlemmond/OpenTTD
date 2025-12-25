@@ -378,6 +378,17 @@ ttdctl engine get <engine_id>
 4. **Short routes:** Aircraft overhead makes short routes unprofitable
 5. **Missing mail:** Mixed passenger/mail is often more profitable
 
+### Before Cloning Aircraft
+
+**See AGENT_RULES.md Rule 6: NEVER clone an aircraft that isn't working.**
+
+Before cloning any aircraft:
+1. Verify it's flying or loading (not stuck in hangar): `ttdctl vehicle get <id>`
+2. Verify it has valid orders to at least 2 airports: `ttdctl order list <id>`
+3. Only clone aircraft that are actively operating their route
+
+If an aircraft is stuck in the hangar, check its orders and start it - don't just clone it hoping copies will work.
+
 ---
 
 ## Verifying Your Work
@@ -534,6 +545,7 @@ ttdctl town get <id>
 ttdctl industry list
 ttdctl station list
 ttdctl station get <id>
+ttdctl station coverage <id>     # What cargo station accepts/supplies
 ttdctl cargo list
 ```
 

@@ -41,6 +41,7 @@ void PrintTable(const std::vector<std::vector<std::string>> &rows);
 int HandlePing(RpcClient &client, const CliOptions &opts);
 int HandleGameStatus(RpcClient &client, const CliOptions &opts);
 int HandleCompanyList(RpcClient &client, const CliOptions &opts);
+int HandleCompanyAlerts(RpcClient &client, const CliOptions &opts);
 int HandleVehicleList(RpcClient &client, const CliOptions &opts);
 int HandleVehicleGet(RpcClient &client, const CliOptions &opts);
 int HandleStationList(RpcClient &client, const CliOptions &opts);
@@ -60,8 +61,10 @@ int HandleCargoGetIncome(RpcClient &client, const CliOptions &opts);
 int HandleIndustryGetStockpile(RpcClient &client, const CliOptions &opts);
 int HandleIndustryGetAcceptance(RpcClient &client, const CliOptions &opts);
 int HandleStationGetCargoFlow(RpcClient &client, const CliOptions &opts);
+int HandleStationCoverage(RpcClient &client, const CliOptions &opts);
 int HandleVehicleGetCargoByType(RpcClient &client, const CliOptions &opts);
 int HandleAirportInfo(RpcClient &client, const CliOptions &opts);
+int HandleRouteCheck(RpcClient &client, const CliOptions &opts);
 
 /* Action commands - commands_action.cpp */
 int HandleGameNewGame(RpcClient &client, const CliOptions &opts);
@@ -91,6 +94,8 @@ int HandleRailBuildDepot(RpcClient &client, const CliOptions &opts);
 int HandleRailBuildStation(RpcClient &client, const CliOptions &opts);
 int HandleRailBuildSignal(RpcClient &client, const CliOptions &opts);
 int HandleRailRemoveSignal(RpcClient &client, const CliOptions &opts);
+int HandleRailBuildTrackLine(RpcClient &client, const CliOptions &opts);
+int HandleRailSignalLine(RpcClient &client, const CliOptions &opts);
 int HandleMarineBuildDock(RpcClient &client, const CliOptions &opts);
 int HandleMarineBuildDepot(RpcClient &client, const CliOptions &opts);
 int HandleAirportBuild(RpcClient &client, const CliOptions &opts);
@@ -101,5 +106,6 @@ int HandleEngineGet(RpcClient &client, const CliOptions &opts);
 int HandleVehicleBuild(RpcClient &client, const CliOptions &opts);
 int HandleVehicleSell(RpcClient &client, const CliOptions &opts);
 int HandleVehicleClone(RpcClient &client, const CliOptions &opts);
+int HandleVehicleAttach(RpcClient &client, const CliOptions &opts);
 
 #endif /* CLI_COMMON_H */

@@ -80,9 +80,25 @@ ttdctl rail track <x> <y> --track <type>
 #   right  - Diagonal NW-SE (right)
 ```
 
-**Building a Line:**
+**Building a Line (Recommended - Batch Method):**
 
-To connect two points, build track tiles sequentially:
+Use `track-line` to build an entire track line in one command:
+
+```bash
+# Build track from (50,100) to (60,100)
+ttdctl rail track-line 50 100 60 100
+
+# Build track with a corner (L-shaped route)
+ttdctl rail track-line 50 100 60 110
+# This builds: horizontal segment, corner piece, vertical segment
+```
+
+The `track-line` command automatically:
+- Determines the correct track type (x/y) based on direction
+- Builds corner pieces for L-shaped routes
+- Reports each segment's success/failure
+
+**Manual Method (for precise control):**
 
 ```bash
 # Horizontal line from (50,100) to (55,100)
@@ -126,20 +142,43 @@ ttdctl rail depot 48 100 --direction se
 
 ### Signal Construction
 
+**Bulk Signal Placement (Recommended):**
+
+Use `signal-line` to place signals along an entire track section:
+
 ```bash
-# Build a signal
+# Place PBS signals from (50,100) to (60,100) on x track
+ttdctl rail signal-line 50 100 60 100
+
+# With options:
+ttdctl rail signal-line 50 100 60 100 --type pbs_oneway --density 4
+
+# Signal types: block, entry, exit, combo, pbs, pbs_oneway (default)
+# Density: spacing between signals (default: 4 tiles)
+```
+
+The `signal-line` command:
+- Auto-detects track direction if not specified
+- Places signals at regular intervals
+- Uses autofill to follow the track
+- Defaults to PBS one-way signals (safest)
+
+**Single Signal Placement:**
+
+```bash
+# Build a single signal
 ttdctl rail signal <x> <y> --track <type> --signal <signal_type>
 
 # Signal types:
-#   normal         - Standard block signal
+#   block          - Standard block signal
 #   entry          - Entry pre-signal
 #   exit           - Exit pre-signal
 #   combo          - Combo pre-signal
-#   path           - Path signal (recommended for stations)
-#   path_oneway    - One-way path signal
+#   pbs            - Path signal (recommended for stations)
+#   pbs_oneway     - One-way path signal
 
 # Example: Path signal on horizontal track
-ttdctl rail signal 52 100 --track x --signal path
+ttdctl rail signal 52 100 --track x --signal pbs
 ```
 
 ---
@@ -212,13 +251,32 @@ ttdctl vehicle build --engine <engine_id> --depot <depot_tile>
 ttdctl vehicle build --engine 5 --depot 1234
 ```
 
-**After building a locomotive, attach wagons:**
+**Attaching Wagons to Trains:**
 
 ```bash
-# Get the vehicle ID from the build output, then add wagons
+# Build wagons at the depot
 ttdctl vehicle build --engine <wagon_id> --depot <depot_tile>
-# Wagons automatically attach to the last-built locomotive
+
+# Attach a wagon to a specific train
+ttdctl vehicle attach <wagon_id> <train_id>
+
+# Example workflow:
+# 1. Build locomotive
+ttdctl vehicle build --engine 5 --depot 1234
+# Returns: {"vehicle_id": 100, ...}
+
+# 2. Build wagons
+ttdctl vehicle build --engine 42 --depot 1234
+# Returns: {"vehicle_id": 101, ...}
+ttdctl vehicle build --engine 42 --depot 1234
+# Returns: {"vehicle_id": 102, ...}
+
+# 3. Attach wagons to the locomotive
+ttdctl vehicle attach 101 100
+ttdctl vehicle attach 102 100
 ```
+
+The `vehicle attach` command attaches a wagon to the end of an existing train consist.
 
 ### Managing Trains
 
@@ -226,7 +284,7 @@ ttdctl vehicle build --engine <wagon_id> --depot <depot_tile>
 # List all trains
 ttdctl vehicle list train
 
-# Get details about a specific train
+# Get details about a specific train (includes full composition)
 ttdctl vehicle get <vehicle_id>
 
 # Start/stop a train
@@ -308,6 +366,19 @@ ttdctl engine get <id>
 - **Passenger trains:** 4-6 coaches for local, 8-10 for express
 - **Long routes:** Consider double-heading (2 locomotives)
 
+**Viewing Train Composition:**
+
+```bash
+# Get full composition of a train
+ttdctl vehicle get <vehicle_id>
+```
+
+Returns detailed information including:
+- `composition` - Array of all wagons with their cargo type/capacity
+- `wagon_count` - Total number of units in the consist
+- `total_capacity` - Combined cargo capacity
+- `total_cargo` - Current cargo loaded
+
 ### Signaling Strategy
 
 **Single Track Lines:**
@@ -338,6 +409,17 @@ Place signals every 5-10 tiles. Use path signals at station throats.
 2. **Always** have at least one train length between signals at junctions
 3. **Use path signals** at complex junctions - they're smarter
 4. **Test new routes** with a single train before adding more
+
+### Before Cloning Trains
+
+**See AGENT_RULES.md Rule 6: NEVER clone a train that isn't working.**
+
+Before cloning any train:
+1. Verify it's `running` or `loading` (not stuck): `ttdctl vehicle get <id>`
+2. Verify route is connected: `ttdctl route check <station1_tile> <station2_tile> --type rail`
+3. Only clone trains that are actively operating their route
+
+If a train is stuck, diagnose and fix the problem first - don't add more trains to a broken route.
 
 ### Profitable Routes
 
@@ -439,9 +521,11 @@ Every 5 minutes, write to `reports/ROUND_<N>_TRAIN.md`:
 ### Infrastructure
 ```bash
 ttdctl rail track <x> <y> --track <type>
+ttdctl rail track-line <start_x> <start_y> <end_x> <end_y>  # Batch build
 ttdctl rail station <x> <y> --axis <x|y> --platforms <n> --length <n>
 ttdctl rail depot <x> <y> --direction <dir>
 ttdctl rail signal <x> <y> --track <type> --signal <signal_type>
+ttdctl rail signal-line <start_x> <start_y> <end_x> <end_y>  # Bulk signals
 ```
 
 ### Vehicles
@@ -449,8 +533,9 @@ ttdctl rail signal <x> <y> --track <type> --signal <signal_type>
 ttdctl engine list train
 ttdctl engine get <id>
 ttdctl vehicle list train
-ttdctl vehicle get <id>
+ttdctl vehicle get <id>                            # Shows full composition
 ttdctl vehicle build --engine <id> --depot <tile>
+ttdctl vehicle attach <wagon_id> <train_id>        # Attach wagon to train
 ttdctl vehicle sell <id>
 ttdctl vehicle clone <id> --depot <tile>
 ttdctl vehicle startstop <id>
@@ -476,6 +561,7 @@ ttdctl route check <from_tile> <to_tile> --type rail
 ```bash
 ttdctl station list
 ttdctl station get <id>
+ttdctl station coverage <id>    # What cargo station accepts/supplies
 ttdctl industry list
 ttdctl industry get <id>
 ttdctl cargo list

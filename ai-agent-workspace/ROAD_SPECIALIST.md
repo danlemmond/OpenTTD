@@ -426,6 +426,91 @@ ttdctl route check 5000 5100 --type road
 
 ---
 
+## Troubleshooting Non-Working Routes
+
+**CRITICAL: NEVER clone a vehicle that isn't working. Cloning broken vehicles just creates more broken vehicles.**
+
+When a bus or truck isn't operating correctly, follow this diagnostic procedure:
+
+### Step 1: Check Vehicle Status
+
+```bash
+ttdctl vehicle get <vehicle_id>
+```
+
+Look at the `state` field:
+- `stopped` - Vehicle is manually stopped. Start it with `ttdctl vehicle startstop <id>`
+- `in_depot` - Vehicle is in depot. Check if it has orders, then start it
+- `loading` - Normal, vehicle is at a stop
+- `running` - Normal, vehicle is traveling
+- `broken` - Vehicle broke down, will resume automatically
+- `crashed` - Vehicle was in an accident
+
+### Step 2: Check Orders
+
+```bash
+ttdctl order list <vehicle_id>
+```
+
+**Problems to look for:**
+- Empty order list → Vehicle has no destinations. Add orders!
+- Only one order → Vehicle needs at least 2 stops to operate
+- Orders reference non-existent stations → Rebuild missing stops
+
+### Step 3: Check Route Connectivity
+
+```bash
+# Get station IDs from the order list, then check connectivity
+ttdctl route check <stop1_tile> <stop2_tile> --type road
+```
+
+If `connected: false`:
+1. Find the gap in the road network
+2. Build missing road segments
+3. Verify depot faces a road
+
+### Step 4: Check Station Status
+
+```bash
+ttdctl station get <station_id>
+```
+
+Verify the station exists and is accessible.
+
+### Decision Tree
+
+```
+Vehicle not working?
+│
+├─► Is it stopped? ──► Start it: ttdctl vehicle startstop <id>
+│
+├─► No orders? ──► Add orders to stations
+│
+├─► Route not connected? ──► Fix road gaps, NOT add more vehicles
+│
+├─► Station missing? ──► Rebuild the station
+│
+└─► Still broken? ──► Sell it and build a new one with correct setup
+```
+
+### What NOT To Do
+
+❌ **DO NOT** clone a bus/truck that isn't moving
+❌ **DO NOT** add more vehicles to a broken route
+❌ **DO NOT** assume more vehicles will fix the problem
+❌ **DO NOT** ignore "vehicle lost" alerts
+
+### What TO Do
+
+✓ **DIAGNOSE** the problem first using the commands above
+✓ **FIX** the infrastructure (roads, stops, depot orientation)
+✓ **VERIFY** connectivity with `route check` before deploying
+✓ **THEN** add more vehicles only after the route is working
+
+**Golden Rule:** One working vehicle on a verified route is worth more than ten cloned vehicles on a broken route.
+
+---
+
 ## Reporting Format
 
 Every 5 minutes, write to `reports/ROUND_<N>_ROAD.md`:
@@ -528,6 +613,7 @@ ttdctl town list
 ttdctl town get <id>
 ttdctl station list
 ttdctl station get <id>
+ttdctl station coverage <id>     # What cargo station accepts/supplies
 ttdctl industry list
 ttdctl cargo list
 ```

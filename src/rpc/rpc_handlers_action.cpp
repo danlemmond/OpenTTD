@@ -24,6 +24,7 @@
 #include "../engine_func.h"
 #include "../depot_map.h"
 #include "../train.h"
+#include "../train_cmd.h"
 #include "../roadveh.h"
 #include "../cargotype.h"
 #include "../company_base.h"
@@ -693,6 +694,90 @@ static nlohmann::json HandleVehicleRefit(const nlohmann::json &params)
 		result["cost"] = cost.GetCost().base();
 	} else {
 		result["error"] = "Failed to refit vehicle - check cargo type is valid for this vehicle";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for vehicle.attach - Attach a wagon to a train.
+ *
+ * Parameters:
+ *   wagon_id: The wagon to attach (required)
+ *   train_id: The train to attach to (required, use the locomotive ID)
+ *   move_chain: Whether to move the entire chain (default: true)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the attach succeeded
+ *   wagon_id: The wagon that was attached
+ *   train_id: The train it was attached to
+ */
+static nlohmann::json HandleVehicleAttach(const nlohmann::json &params)
+{
+	if (!params.contains("wagon_id")) {
+		throw std::runtime_error("Missing required parameter: wagon_id");
+	}
+	if (!params.contains("train_id")) {
+		throw std::runtime_error("Missing required parameter: train_id");
+	}
+
+	VehicleID wagon_id = static_cast<VehicleID>(params["wagon_id"].get<int>());
+	VehicleID train_id = static_cast<VehicleID>(params["train_id"].get<int>());
+	bool move_chain = params.value("move_chain", true);
+
+	/* Get the wagon */
+	const Vehicle *wagon = Vehicle::GetIfValid(wagon_id);
+	if (wagon == nullptr) {
+		throw std::runtime_error("Invalid wagon ID");
+	}
+	if (wagon->type != VEH_TRAIN) {
+		throw std::runtime_error("Vehicle is not a train/wagon");
+	}
+
+	/* Get the train (locomotive) */
+	const Vehicle *train = Vehicle::GetIfValid(train_id);
+	if (train == nullptr) {
+		throw std::runtime_error("Invalid train ID");
+	}
+	if (train->type != VEH_TRAIN) {
+		throw std::runtime_error("Target vehicle is not a train");
+	}
+
+	/* Switch to company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	if (!Company::IsValidID(company)) {
+		throw std::runtime_error("Invalid company ID");
+	}
+
+	/* Verify ownership */
+	if (wagon->owner != company || train->owner != company) {
+		throw std::runtime_error("Vehicles are not owned by specified company");
+	}
+
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	/* Use CMD_MOVE_RAIL_VEHICLE to attach wagon to train
+	 * src_veh = wagon to move
+	 * dest_veh = vehicle to attach to (the last wagon of the train)
+	 */
+	const Train *t = Train::From(train);
+	VehicleID dest_id = t->Last()->index;
+
+	CommandCost cost = Command<CMD_MOVE_RAIL_VEHICLE>::Do(flags, wagon_id, dest_id, move_chain);
+
+	cur_company.Restore();
+
+	nlohmann::json result;
+	result["wagon_id"] = wagon_id.base();
+	result["train_id"] = train_id.base();
+	result["success"] = cost.Succeeded();
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to attach wagon - check that both vehicles are in the same depot";
 	}
 
 	return result;
@@ -1410,6 +1495,7 @@ void RpcRegisterActionHandlers(RpcServer &server)
 	server.RegisterHandler("vehicle.sell", HandleVehicleSell);
 	server.RegisterHandler("vehicle.clone", HandleVehicleClone);
 	server.RegisterHandler("vehicle.refit", HandleVehicleRefit);
+	server.RegisterHandler("vehicle.attach", HandleVehicleAttach);
 	server.RegisterHandler("order.append", HandleOrderAppend);
 	server.RegisterHandler("order.remove", HandleOrderRemove);
 	server.RegisterHandler("order.insert", HandleOrderInsert);

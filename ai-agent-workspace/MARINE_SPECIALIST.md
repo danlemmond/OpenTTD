@@ -372,6 +372,17 @@ ttdctl engine get <engine_id>
 - Place buoys at channel entrances
 - Avoid very narrow passages
 
+### Before Cloning Ships
+
+**See AGENT_RULES.md Rule 6: NEVER clone a ship that isn't working.**
+
+Before cloning any ship:
+1. Verify it's `running` or `loading` (not stuck): `ttdctl vehicle get <id>`
+2. Verify water route is connected: `ttdctl route check <dock1_tile> <dock2_tile> --type water`
+3. Only clone ships that are actively operating their route
+
+If a ship is stuck, diagnose and fix the problem first - don't add more ships to a broken route.
+
 ---
 
 ## Canal Strategy
@@ -529,6 +540,7 @@ ttdctl industry list
 ttdctl industry get <id>
 ttdctl station list
 ttdctl station get <id>
+ttdctl station coverage <id>     # What cargo station accepts/supplies
 ttdctl cargo list
 ttdctl map info
 ```

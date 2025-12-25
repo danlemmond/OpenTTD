@@ -90,6 +90,66 @@ int HandleCompanyList(RpcClient &client, const CliOptions &opts)
 	}
 }
 
+int HandleCompanyAlerts(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		nlohmann::json params;
+		/* Optional company ID - default to 0 */
+		if (!opts.args.empty()) {
+			params["company"] = std::stoi(opts.args[0]);
+		} else {
+			params["company"] = 0;
+		}
+
+		auto result = client.Call("company.alerts", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		auto &alerts = result["alerts"];
+		if (alerts.empty()) {
+			std::cout << "No recent alerts.\n";
+			return 0;
+		}
+
+		std::cout << "Company Alerts\n";
+		std::cout << "--------------\n";
+
+		for (const auto &alert : alerts) {
+			std::string type = alert.value("type", "unknown");
+			std::string advice = alert.value("advice_type", "");
+
+			/* Format the alert type nicely */
+			std::string display_type = type;
+			if (!advice.empty()) {
+				display_type = advice;
+			}
+
+			std::cout << "[" << display_type << "] ";
+
+			/* Show relevant details based on alert type */
+			if (alert.contains("vehicle_id")) {
+				std::cout << "Vehicle #" << alert["vehicle_id"].get<int>();
+			}
+			if (alert.contains("station_id")) {
+				std::cout << " Station #" << alert["station_id"].get<int>();
+			}
+			if (alert.contains("message") && !alert["message"].get<std::string>().empty()) {
+				std::cout << " - " << alert["message"].get<std::string>();
+			}
+
+			std::cout << "\n";
+		}
+
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
 int HandleVehicleList(RpcClient &client, const CliOptions &opts)
 {
 	try {
@@ -771,12 +831,45 @@ int HandleCargoGetIncome(RpcClient &client, const CliOptions &opts)
 	try {
 		if (opts.args.size() < 3) {
 			std::cerr << "Error: requires cargo_type distance days_in_transit [amount]\n";
-			std::cerr << "Usage: ttdctl cargo income <cargo_type> <distance> <days> [amount]\n";
+			std::cerr << "Usage: ttdctl cargo income <cargo_type|cargo_name> <distance> <days> [amount]\n";
 			return 1;
 		}
 
 		nlohmann::json params;
-		params["cargo_type"] = std::stoi(opts.args[0]);
+
+		/* Try to parse cargo as integer ID first, then fall back to name lookup */
+		int cargo_type = -1;
+		std::string cargo_name_resolved;
+		try {
+			cargo_type = std::stoi(opts.args[0]);
+		} catch (const std::exception &) {
+			/* Not a number - look up by name */
+			std::string cargo_name = opts.args[0];
+			/* Convert to lowercase for case-insensitive matching */
+			std::string cargo_name_lower = cargo_name;
+			for (auto &c : cargo_name_lower) c = std::tolower(c);
+
+			auto cargo_list = client.Call("cargo.list", {});
+			for (const auto &cargo : cargo_list) {
+				std::string name = cargo["name"].get<std::string>();
+				std::string name_lower = name;
+				for (auto &c : name_lower) c = std::tolower(c);
+
+				if (name_lower == cargo_name_lower) {
+					cargo_type = cargo["id"].get<int>();
+					cargo_name_resolved = name;
+					break;
+				}
+			}
+
+			if (cargo_type < 0) {
+				std::cerr << "Error: Unknown cargo type '" << cargo_name << "'\n";
+				std::cerr << "Use 'ttdctl cargo list' to see available cargo types.\n";
+				return 1;
+			}
+		}
+
+		params["cargo_type"] = cargo_type;
 		params["distance"] = std::stoi(opts.args[1]);
 		params["days_in_transit"] = std::stoi(opts.args[2]);
 		if (opts.args.size() > 3) {
@@ -792,7 +885,11 @@ int HandleCargoGetIncome(RpcClient &client, const CliOptions &opts)
 
 		std::cout << "Cargo Income Calculation\n";
 		std::cout << "------------------------\n";
-		std::cout << "Cargo Type:      " << result["cargo_type"].get<int>() << "\n";
+		if (!cargo_name_resolved.empty()) {
+			std::cout << "Cargo:           " << cargo_name_resolved << " (ID " << result["cargo_type"].get<int>() << ")\n";
+		} else {
+			std::cout << "Cargo Type:      " << result["cargo_type"].get<int>() << "\n";
+		}
 		std::cout << "Distance:        " << result["distance"].get<int>() << " tiles\n";
 		std::cout << "Days in Transit: " << result["days_in_transit"].get<int>() << "\n";
 		std::cout << "Amount:          " << result["amount"].get<int>() << " units\n";
@@ -917,6 +1014,103 @@ int HandleStationGetCargoFlow(RpcClient &client, const CliOptions &opts)
 	}
 }
 
+int HandleStationCoverage(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.empty()) {
+			std::cerr << "Error: station ID required\n";
+			std::cerr << "Usage: ttdctl station coverage <id>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["id"] = std::stoi(opts.args[0]);
+
+		auto result = client.Call("station.getCoverage", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << result["station_name"].get<std::string>()
+		          << " (#" << result["station_id"].get<int>() << ")\n";
+		std::cout << "Catchment radius: " << result["catchment_radius"].get<int>() << "\n\n";
+
+		/* Industries */
+		auto &industries = result["industries"];
+		if (!industries.empty()) {
+			std::cout << "Industries in catchment:\n";
+			for (const auto &ind : industries) {
+				std::cout << "  - " << ind["type"].get<std::string>()
+				          << " (#" << ind["id"].get<int>() << ")";
+				auto &accepts = ind["accepts"];
+				auto &produces = ind["produces"];
+				if (!accepts.empty()) {
+					std::cout << " [accepts: ";
+					for (size_t i = 0; i < accepts.size(); i++) {
+						if (i > 0) std::cout << ", ";
+						std::cout << accepts[i].get<std::string>();
+					}
+					std::cout << "]";
+				}
+				if (!produces.empty()) {
+					std::cout << " [produces: ";
+					for (size_t i = 0; i < produces.size(); i++) {
+						if (i > 0) std::cout << ", ";
+						std::cout << produces[i].get<std::string>();
+					}
+					std::cout << "]";
+				}
+				std::cout << "\n";
+			}
+			std::cout << "\n";
+		}
+
+		/* Towns */
+		auto &towns = result["towns"];
+		if (!towns.empty()) {
+			std::cout << "Towns in catchment:\n";
+			for (const auto &town : towns) {
+				std::cout << "  - " << town["name"].get<std::string>()
+				          << " (pop: " << town["population"].get<int>() << ")\n";
+			}
+			std::cout << "\n";
+		}
+
+		/* Summary */
+		auto &accepts = result["accepts"];
+		auto &supplies = result["supplies"];
+
+		std::cout << "Station accepts: ";
+		if (accepts.empty()) {
+			std::cout << "(nothing)";
+		} else {
+			for (size_t i = 0; i < accepts.size(); i++) {
+				if (i > 0) std::cout << ", ";
+				std::cout << accepts[i].get<std::string>();
+			}
+		}
+		std::cout << "\n";
+
+		std::cout << "Station supplies: ";
+		if (supplies.empty()) {
+			std::cout << "(nothing)";
+		} else {
+			for (size_t i = 0; i < supplies.size(); i++) {
+				if (i > 0) std::cout << ", ";
+				std::cout << supplies[i].get<std::string>();
+			}
+		}
+		std::cout << "\n";
+
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
 int HandleVehicleGetCargoByType(RpcClient &client, const CliOptions &opts)
 {
 	try {
@@ -1012,6 +1206,52 @@ int HandleAirportInfo(RpcClient &client, const CliOptions &opts)
 		}
 		PrintTable(rows);
 		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+int HandleRouteCheck(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: requires start_tile and end_tile\n";
+			std::cerr << "Usage: ttdctl route check <start_tile> <end_tile> [--type rail|road|water]\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["start_tile"] = std::stoi(opts.args[0]);
+		params["end_tile"] = std::stoi(opts.args[1]);
+
+		/* Check for --type flag, default to road */
+		std::string transport_type = "road";
+		for (size_t i = 2; i < opts.args.size(); i++) {
+			if (opts.args[i] == "--type" && i + 1 < opts.args.size()) {
+				transport_type = opts.args[i + 1];
+				break;
+			}
+		}
+		params["transport_type"] = transport_type;
+
+		auto result = client.Call("route.check", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool connected = result["connected"].get<bool>();
+		std::string type = result.value("transport_type", transport_type);
+
+		std::cout << "Route Check (" << type << ")\n";
+		std::cout << "-------------------\n";
+		std::cout << "Start Tile: " << result["start_tile"].get<int>() << "\n";
+		std::cout << "End Tile:   " << result["end_tile"].get<int>() << "\n";
+		std::cout << "Connected:  " << (connected ? "YES" : "NO") << "\n";
+
+		return connected ? 0 : 1;
 	} catch (const std::exception &e) {
 		std::cerr << "Error: " << e.what() << "\n";
 		return 1;

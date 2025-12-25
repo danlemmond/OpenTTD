@@ -284,3 +284,38 @@ int HandleVehicleClone(RpcClient &client, const CliOptions &opts)
 		return 1;
 	}
 }
+
+int HandleVehicleAttach(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: requires wagon_id and train_id\n";
+			std::cerr << "Usage: ttdctl vehicle attach <wagon_id> <train_id>\n";
+			std::cerr << "\nAttaches a wagon to a train (both must be in the same depot).\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["wagon_id"] = std::stoi(opts.args[0]);
+		params["train_id"] = std::stoi(opts.args[1]);
+
+		auto result = client.Call("vehicle.attach", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return result["success"].get<bool>() ? 0 : 1;
+		}
+
+		if (result["success"].get<bool>()) {
+			std::cout << "Successfully attached wagon #" << result["wagon_id"].get<int>()
+			          << " to train #" << result["train_id"].get<int>() << "\n";
+			return 0;
+		} else {
+			std::cerr << "Failed to attach wagon: " << result.value("error", "Unknown error") << "\n";
+			return 1;
+		}
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}

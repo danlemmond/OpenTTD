@@ -325,7 +325,16 @@ ttdctl subsidy list
 
 # Find towns needing service
 ttdctl town list
+
+# Check what cargo a station accepts/supplies
+ttdctl station coverage <station_id>
 ```
+
+**Station Coverage** returns:
+- Industries within catchment (with distance and cargo types)
+- Towns within catchment (for passenger/mail)
+- List of cargo types the station accepts
+- List of cargo types waiting for pickup
 
 ### Profitable Cargo Routes (Typical)
 
@@ -397,6 +406,7 @@ ttdctl activity clear            # Reset activity tracking
 ttdctl game status               # Game date/state
 ttdctl vehicle list              # All vehicles
 ttdctl station list              # All stations
+ttdctl station coverage <id>     # Station cargo acceptance/supply details
 ```
 
 ---

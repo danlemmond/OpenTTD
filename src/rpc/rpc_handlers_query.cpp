@@ -16,6 +16,7 @@
 #include "../vehicle_base.h"
 #include "../vehicle_func.h"
 #include "../roadveh.h"
+#include "../train.h"
 #include "../station_base.h"
 #include "../industry.h"
 #include "../cargotype.h"
@@ -345,6 +346,55 @@ static nlohmann::json HandleVehicleGet(const nlohmann::json &params)
 		const RoadVehicle *rv = RoadVehicle::From(v);
 		result["is_bus"] = rv->IsBus();
 		result["roadtype"] = static_cast<int>(rv->roadtype);
+	}
+
+	/* For trains, include wagon composition */
+	if (v->type == VEH_TRAIN) {
+		nlohmann::json composition = nlohmann::json::array();
+		uint total_capacity = 0;
+		uint total_cargo = 0;
+
+		for (const Vehicle *u = v->First(); u != nullptr; u = u->Next()) {
+			nlohmann::json wagon;
+			wagon["id"] = u->index.base();
+			wagon["engine_id"] = Engine::IsValidID(u->engine_type) ? u->engine_type.base() : -1;
+
+			/* Get engine name */
+			if (Engine::IsValidID(u->engine_type)) {
+				wagon["engine_name"] = StrMakeValid(GetString(STR_ENGINE_NAME, u->engine_type));
+			}
+
+			/* Determine wagon type */
+			const Train *t = Train::From(u);
+			if (t->IsEngine()) {
+				wagon["wagon_type"] = "engine";
+			} else if (t->IsMultiheaded()) {
+				wagon["wagon_type"] = "rear_engine";
+			} else {
+				wagon["wagon_type"] = "wagon";
+			}
+
+			/* Cargo info */
+			if (u->cargo_cap > 0) {
+				const CargoSpec *cs = CargoSpec::Get(u->cargo_type);
+				wagon["cargo_type"] = cs != nullptr ? StrMakeValid(GetString(cs->name)) : "none";
+				wagon["cargo_capacity"] = u->cargo_cap;
+				wagon["cargo_count"] = u->cargo.StoredCount();
+				total_capacity += u->cargo_cap;
+				total_cargo += u->cargo.StoredCount();
+			} else {
+				wagon["cargo_type"] = "none";
+				wagon["cargo_capacity"] = 0;
+				wagon["cargo_count"] = 0;
+			}
+
+			composition.push_back(wagon);
+		}
+
+		result["composition"] = composition;
+		result["total_capacity"] = total_capacity;
+		result["total_cargo"] = total_cargo;
+		result["wagon_count"] = composition.size();
 	}
 
 	return result;
@@ -1549,6 +1599,127 @@ static nlohmann::json HandleStationGetCargoPlanned(const nlohmann::json &params)
 }
 
 /**
+ * Handler for station.getCoverage - Get industries and towns covered by a station.
+ *
+ * Parameters:
+ *   id: Station ID (required)
+ *
+ * Returns:
+ *   station_id: The station ID
+ *   station_name: The station name
+ *   catchment_radius: The catchment radius
+ *   industries: Array of industries within catchment
+ *   towns: Array of towns within catchment
+ *   accepts: Cargo types accepted at this station
+ *   supplies: Cargo types that can be picked up here
+ */
+static nlohmann::json HandleStationGetCoverage(const nlohmann::json &params)
+{
+	if (!params.contains("id")) {
+		throw std::runtime_error("Missing required parameter: id");
+	}
+
+	StationID sid = static_cast<StationID>(params["id"].get<int>());
+	const Station *st = Station::GetIfValid(sid);
+	if (st == nullptr) {
+		throw std::runtime_error("Invalid station ID");
+	}
+
+	nlohmann::json result;
+	result["station_id"] = st->index.base();
+	result["station_name"] = StrMakeValid(GetString(STR_STATION_NAME, st->index));
+	result["catchment_radius"] = st->GetCatchmentRadius();
+
+	/* Get industries within catchment */
+	nlohmann::json industries = nlohmann::json::array();
+	for (const IndustryListEntry &entry : st->industries_near) {
+		const Industry *ind = entry.industry;
+		nlohmann::json ind_json;
+		ind_json["id"] = ind->index.base();
+		ind_json["type"] = StrMakeValid(GetString(GetIndustrySpec(ind->type)->name));
+		ind_json["tile"] = ind->location.tile.base();
+		ind_json["distance"] = entry.distance;
+
+		/* What cargo does this industry accept? */
+		nlohmann::json accepts_arr = nlohmann::json::array();
+		for (const auto &a : ind->accepted) {
+			if (!IsValidCargoType(a.cargo)) continue;
+			const CargoSpec *cs = CargoSpec::Get(a.cargo);
+			if (cs == nullptr || !cs->IsValid()) continue;
+			accepts_arr.push_back(StrMakeValid(GetString(cs->name)));
+		}
+		ind_json["accepts"] = accepts_arr;
+
+		/* What cargo does this industry produce? */
+		nlohmann::json produces_arr = nlohmann::json::array();
+		for (const auto &p : ind->produced) {
+			if (!IsValidCargoType(p.cargo)) continue;
+			const CargoSpec *cs = CargoSpec::Get(p.cargo);
+			if (cs == nullptr || !cs->IsValid()) continue;
+			produces_arr.push_back(StrMakeValid(GetString(cs->name)));
+		}
+		ind_json["produces"] = produces_arr;
+
+		industries.push_back(ind_json);
+	}
+	result["industries"] = industries;
+
+	/* Get towns within catchment */
+	nlohmann::json towns = nlohmann::json::array();
+	for (const Town *t : Town::Iterate()) {
+		if (st->CatchmentCoversTown(t->index)) {
+			nlohmann::json town_json;
+			town_json["id"] = t->index.base();
+			town_json["name"] = StrMakeValid(GetString(STR_TOWN_NAME, t->index));
+			town_json["population"] = t->cache.population;
+			towns.push_back(town_json);
+		}
+	}
+	result["towns"] = towns;
+
+	/* What cargo types does this station accept? */
+	nlohmann::json accepts = nlohmann::json::array();
+	nlohmann::json supplies = nlohmann::json::array();
+
+	for (CargoType c = 0; c < NUM_CARGO; c++) {
+		if (!IsValidCargoType(c)) continue;
+		const CargoSpec *cs = CargoSpec::Get(c);
+		if (cs == nullptr || !cs->IsValid()) continue;
+
+		const GoodsEntry &ge = st->goods[c];
+
+		/* Check if station accepts this cargo */
+		if (IsCargoInClass(c, CargoClass::Passengers) || IsCargoInClass(c, CargoClass::Mail)) {
+			/* Passengers and mail are accepted if any town is in catchment */
+			if (!towns.empty()) {
+				accepts.push_back(StrMakeValid(GetString(cs->name)));
+			}
+		} else {
+			/* Other cargo - check if any industry accepts it */
+			for (const IndustryListEntry &entry : st->industries_near) {
+				const Industry *ind = entry.industry;
+				for (const auto &a : ind->accepted) {
+					if (a.cargo == c) {
+						accepts.push_back(StrMakeValid(GetString(cs->name)));
+						goto next_cargo_accept;
+					}
+				}
+			}
+			next_cargo_accept:;
+		}
+
+		/* Check if cargo is waiting (means it can be picked up here) */
+		if (ge.HasRating() || ge.TotalCount() > 0) {
+			supplies.push_back(StrMakeValid(GetString(cs->name)));
+		}
+	}
+	result["accepts"] = accepts;
+	result["supplies"] = supplies;
+
+	return result;
+}
+
+/**
  * Handler for vehicle.getCargoByType - Get detailed cargo breakdown for a vehicle.
  *
  * Parameters:
@@ -2080,6 +2251,7 @@ void RpcRegisterQueryHandlers(RpcServer &server)
 	server.RegisterHandler("industry.getStockpile", HandleIndustryGetStockpile);
 	server.RegisterHandler("industry.getAcceptance", HandleIndustryGetAcceptance);
 	server.RegisterHandler("station.getCargoPlanned", HandleStationGetCargoPlanned);
+	server.RegisterHandler("station.getCoverage", HandleStationGetCoverage);
 	server.RegisterHandler("vehicle.getCargoByType", HandleVehicleGetCargoByType);
 	server.RegisterHandler("airport.info", HandleAirportInfo);
 	server.RegisterHandler("company.alerts", HandleCompanyAlerts);

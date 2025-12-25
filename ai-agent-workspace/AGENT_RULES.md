@@ -238,6 +238,57 @@ activity clear         - Reset activity tracking
 
 ---
 
+## Rule 6: Diagnose Before Cloning
+
+**NEVER clone a vehicle that isn't working. Diagnose and fix the problem first.**
+
+### The Problem
+
+Cloning a broken vehicle creates more broken vehicles. If a bus isn't moving, adding 10 more buses to the same broken route accomplishes nothing except wasting money.
+
+### Required Diagnostic Steps
+
+Before cloning ANY vehicle, verify it is operating correctly:
+
+1. **Check vehicle state:** `ttdctl vehicle get <id>`
+   - Is it `running` or `loading`? → Working correctly, safe to clone
+   - Is it `stopped` or `in_depot`? → Start it first, verify it moves
+   - Is it stuck in one location? → Route problem, DO NOT clone
+
+2. **Check orders:** `ttdctl order list <id>`
+   - Does it have at least 2 orders? → If not, add orders first
+   - Do the orders reference valid stations? → If not, fix orders
+
+3. **Check route connectivity:** `ttdctl route check <tile1> <tile2> --type <road|rail|water>`
+   - Is it connected? → If not, fix infrastructure first
+
+### Only Clone When
+
+✓ The original vehicle is actively running its route
+✓ The route is verified as connected
+✓ The vehicle is generating revenue (or just deployed on a new verified route)
+✓ You want to increase capacity on a WORKING route
+
+### Never Clone When
+
+❌ The vehicle is stuck or not moving
+❌ You're getting "vehicle lost" alerts
+❌ The route hasn't been verified
+❌ You're hoping more vehicles will somehow fix the problem
+
+### Golden Rule
+
+**One working vehicle beats ten broken ones.**
+
+If something isn't working:
+1. STOP adding vehicles
+2. DIAGNOSE the problem
+3. FIX the infrastructure
+4. VERIFY the fix
+5. THEN clone if capacity is needed
+
+---
+
 ## Summary of Prohibitions
 
 | Action | Permitted? |
@@ -247,12 +298,15 @@ activity clear         - Reset activity tracking
 | Communicating via state files | YES |
 | Reading documentation | YES |
 | Deleting own domain infrastructure you placed | YES |
+| Cloning a working, verified vehicle | YES |
 | Exploiting game bugs | **NO** |
 | Restarting the game (Specialists) | **NO** |
 | Restarting the game (Overseer, casually) | **NO** |
 | Restarting the game (Overseer, documented necessity) | YES |
 | Deleting infrastructure outside your domain | **NO** |
 | Deleting infrastructure you didn't place | **NO** |
+| Cloning broken/stuck vehicles | **NO** |
+| Adding vehicles to unverified routes | **NO** |
 | Writing any code | **NO** |
 | Modifying game files | **NO** |
 | Creating new tools | **NO** |

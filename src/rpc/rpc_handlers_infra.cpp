@@ -896,6 +896,311 @@ static nlohmann::json HandleRailRemoveSignal(const nlohmann::json &params)
 }
 
 /**
+ * Handler for rail.buildTrackLine - Build a line of track between two points.
+ *
+ * This is a convenience command that builds a straight line of track from
+ * start to end, automatically determining the correct track type based on
+ * the direction of travel.
+ *
+ * Parameters:
+ *   start_x, start_y: Starting coordinates
+ *   end_x, end_y: Ending coordinates
+ *   rail_type: Rail type to build (default: 0)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the track line was built
+ *   segments: Array of track segments built
+ *   total_cost: Total cost of building
+ */
+static nlohmann::json HandleRailBuildTrackLine(const nlohmann::json &params)
+{
+	if (!params.contains("start_x") || !params.contains("start_y") ||
+	    !params.contains("end_x") || !params.contains("end_y")) {
+		throw std::runtime_error("Missing required parameters: start_x, start_y, end_x, end_y");
+	}
+
+	uint start_x = params["start_x"].get<uint>();
+	uint start_y = params["start_y"].get<uint>();
+	uint end_x = params["end_x"].get<uint>();
+	uint end_y = params["end_y"].get<uint>();
+
+	if (start_x >= Map::SizeX() || start_y >= Map::SizeY() ||
+	    end_x >= Map::SizeX() || end_y >= Map::SizeY()) {
+		throw std::runtime_error("Coordinates out of bounds");
+	}
+
+	TileIndex start_tile = TileXY(start_x, start_y);
+	TileIndex end_tile = TileXY(end_x, end_y);
+
+	RailType railtype = static_cast<RailType>(params.value("rail_type", 0));
+	bool auto_remove_signals = params.value("auto_remove_signals", false);
+	bool fail_on_obstacle = params.value("fail_on_obstacle", true);
+
+	/* Set company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	nlohmann::json segments = nlohmann::json::array();
+	bool all_success = true;
+
+	/* Determine track type based on direction */
+	int dx = (int)end_x - (int)start_x;
+	int dy = (int)end_y - (int)start_y;
+
+	/* Build horizontal segments (TRACK_X goes NE-SW, parallel to x-axis) */
+	/* Build vertical segments (TRACK_Y goes NW-SE, parallel to y-axis) */
+	if (dx != 0 && dy == 0) {
+		/* Pure horizontal line - use TRACK_X */
+		CommandCost cost = Command<CMD_BUILD_RAILROAD_TRACK>::Do(flags, end_tile, start_tile, railtype,
+			TRACK_X, auto_remove_signals, fail_on_obstacle);
+
+		nlohmann::json seg;
+		seg["start_tile"] = start_tile.base();
+		seg["end_tile"] = end_tile.base();
+		seg["track"] = "x";
+		seg["success"] = cost.Succeeded();
+		seg["cost"] = cost.GetCost().base();
+		segments.push_back(seg);
+
+		if (!cost.Succeeded()) {
+			all_success = false;
+		}
+	} else if (dx == 0 && dy != 0) {
+		/* Pure vertical line - use TRACK_Y */
+		CommandCost cost = Command<CMD_BUILD_RAILROAD_TRACK>::Do(flags, end_tile, start_tile, railtype,
+			TRACK_Y, auto_remove_signals, fail_on_obstacle);
+
+		nlohmann::json seg;
+		seg["start_tile"] = start_tile.base();
+		seg["end_tile"] = end_tile.base();
+		seg["track"] = "y";
+		seg["success"] = cost.Succeeded();
+		seg["cost"] = cost.GetCost().base();
+		segments.push_back(seg);
+
+		if (!cost.Succeeded()) {
+			all_success = false;
+		}
+	} else if (dx != 0 && dy != 0) {
+		/* Diagonal or L-shaped - build as two segments */
+		/* First build horizontal segment */
+		TileIndex mid_tile = TileXY(end_x, start_y);
+
+		CommandCost cost1 = Command<CMD_BUILD_RAILROAD_TRACK>::Do(flags, mid_tile, start_tile, railtype,
+			TRACK_X, auto_remove_signals, fail_on_obstacle);
+
+		nlohmann::json seg1;
+		seg1["start_tile"] = start_tile.base();
+		seg1["end_tile"] = mid_tile.base();
+		seg1["track"] = "x";
+		seg1["success"] = cost1.Succeeded();
+		seg1["cost"] = cost1.GetCost().base();
+		segments.push_back(seg1);
+
+		if (!cost1.Succeeded()) {
+			all_success = false;
+		}
+
+		/* Build connecting piece at the corner */
+		Track corner_track = (dx > 0 && dy > 0) ? TRACK_LOWER :
+		                     (dx > 0 && dy < 0) ? TRACK_UPPER :
+		                     (dx < 0 && dy > 0) ? TRACK_RIGHT : TRACK_LEFT;
+
+		CommandCost cost_corner = Command<CMD_BUILD_SINGLE_RAIL>::Do(flags, mid_tile, railtype,
+			corner_track, auto_remove_signals);
+
+		nlohmann::json seg_corner;
+		seg_corner["tile"] = mid_tile.base();
+		seg_corner["track"] = (corner_track == TRACK_LOWER) ? "lower" :
+		                      (corner_track == TRACK_UPPER) ? "upper" :
+		                      (corner_track == TRACK_RIGHT) ? "right" : "left";
+		seg_corner["success"] = cost_corner.Succeeded();
+		seg_corner["cost"] = cost_corner.GetCost().base();
+		segments.push_back(seg_corner);
+
+		if (!cost_corner.Succeeded()) {
+			all_success = false;
+		}
+
+		/* Build vertical segment */
+		CommandCost cost2 = Command<CMD_BUILD_RAILROAD_TRACK>::Do(flags, end_tile, mid_tile, railtype,
+			TRACK_Y, auto_remove_signals, fail_on_obstacle);
+
+		nlohmann::json seg2;
+		seg2["start_tile"] = mid_tile.base();
+		seg2["end_tile"] = end_tile.base();
+		seg2["track"] = "y";
+		seg2["success"] = cost2.Succeeded();
+		seg2["cost"] = cost2.GetCost().base();
+		segments.push_back(seg2);
+
+		if (!cost2.Succeeded()) {
+			all_success = false;
+		}
+	}
+
+	cur_company.Restore();
+
+	if (all_success) {
+		RpcRecordActivity(start_tile, "rail.buildTrackLine");
+		RpcRecordActivity(end_tile, "rail.buildTrackLine");
+	}
+
+	nlohmann::json result;
+	result["success"] = all_success;
+	result["segments"] = segments;
+	result["start_x"] = start_x;
+	result["start_y"] = start_y;
+	result["end_x"] = end_x;
+	result["end_y"] = end_y;
+
+	return result;
+}
+
+/**
+ * Handler for rail.signalLine - Build signals along an existing track.
+ *
+ * Parameters:
+ *   start_x, start_y: Starting coordinates
+ *   end_x, end_y: Ending coordinates
+ *   track: Track to signal (x, y, upper, lower, left, right)
+ *   signal_type: Type of signal (block, entry, exit, combo, pbs, pbs_oneway)
+ *   variant: electric or semaphore (default: electric)
+ *   signal_density: Spacing between signals (default: game setting)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether signals were built
+ *   tile: Starting tile
+ *   end_tile: Ending tile
+ *   cost: Total cost
+ */
+static nlohmann::json HandleRailSignalLine(const nlohmann::json &params)
+{
+	if (!params.contains("start_x") || !params.contains("start_y") ||
+	    !params.contains("end_x") || !params.contains("end_y")) {
+		throw std::runtime_error("Missing required parameters: start_x, start_y, end_x, end_y");
+	}
+
+	uint start_x = params["start_x"].get<uint>();
+	uint start_y = params["start_y"].get<uint>();
+	uint end_x = params["end_x"].get<uint>();
+	uint end_y = params["end_y"].get<uint>();
+
+	if (start_x >= Map::SizeX() || start_y >= Map::SizeY() ||
+	    end_x >= Map::SizeX() || end_y >= Map::SizeY()) {
+		throw std::runtime_error("Coordinates out of bounds");
+	}
+
+	TileIndex start_tile = TileXY(start_x, start_y);
+	TileIndex end_tile = TileXY(end_x, end_y);
+
+	/* Determine track type */
+	Track track = TRACK_X;
+	if (params.contains("track")) {
+		track = ParseTrack(params["track"]);
+	} else {
+		/* Auto-detect based on direction */
+		int dx = (int)end_x - (int)start_x;
+		int dy = (int)end_y - (int)start_y;
+		if (dx != 0 && dy == 0) {
+			track = TRACK_X;
+		} else if (dx == 0 && dy != 0) {
+			track = TRACK_Y;
+		} else {
+			/* Diagonal - use the track that matches the direction */
+			if (abs(dx) > abs(dy)) {
+				track = TRACK_X;
+			} else {
+				track = TRACK_Y;
+			}
+		}
+	}
+
+	/* Signal type */
+	SignalType sigtype = SIGTYPE_PBS_ONEWAY;  /* Default to PBS one-way for safety */
+	if (params.contains("signal_type")) {
+		sigtype = ParseSignalType(params["signal_type"]);
+	}
+
+	/* Signal variant */
+	SignalVariant sigvar = SIG_ELECTRIC;
+	if (params.contains("variant")) {
+		std::string var_str = params["variant"].get<std::string>();
+		if (var_str == "semaphore" || var_str == "sem") {
+			sigvar = SIG_SEMAPHORE;
+		}
+	}
+
+	/* Signal density - 0 means use game default */
+	uint8_t signal_density = params.value("signal_density", 0);
+	if (signal_density == 0) {
+		signal_density = 4;  /* Reasonable default */
+	}
+
+	/* mode=false means build signals in both directions (two-way) */
+	/* mode=true means build signals in one direction only */
+	bool mode = params.value("one_direction", true);
+
+	/* autofill=true makes it follow the track automatically */
+	bool autofill = params.value("autofill", true);
+
+	/* minimise_gaps helps with placing signals near stations */
+	bool minimise_gaps = params.value("minimise_gaps", true);
+
+	/* Set company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	CommandCost cost = Command<CMD_BUILD_SIGNAL_TRACK>::Do(flags, start_tile, end_tile, track,
+		sigtype, sigvar, mode, autofill, minimise_gaps, signal_density);
+
+	cur_company.Restore();
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(start_tile, "rail.signalLine");
+		RpcRecordActivity(end_tile, "rail.signalLine");
+	}
+
+	nlohmann::json result;
+	result["success"] = cost.Succeeded();
+	result["start_tile"] = start_tile.base();
+	result["end_tile"] = end_tile.base();
+	result["start_x"] = start_x;
+	result["start_y"] = start_y;
+	result["end_x"] = end_x;
+	result["end_y"] = end_y;
+	result["cost"] = cost.GetCost().base();
+
+	/* Return what was built */
+	switch (track) {
+		case TRACK_X: result["track"] = "x"; break;
+		case TRACK_Y: result["track"] = "y"; break;
+		case TRACK_UPPER: result["track"] = "upper"; break;
+		case TRACK_LOWER: result["track"] = "lower"; break;
+		case TRACK_LEFT: result["track"] = "left"; break;
+		case TRACK_RIGHT: result["track"] = "right"; break;
+		default: result["track"] = static_cast<int>(track); break;
+	}
+	result["signal_type"] = SignalTypeToString(sigtype);
+	result["variant"] = (sigvar == SIG_SEMAPHORE) ? "semaphore" : "electric";
+	result["signal_density"] = signal_density;
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to build signal line - check track exists and is accessible";
+	}
+
+	return result;
+}
+
+/**
  * Handler for marine.buildDock - Build a ship dock.
  *
  * Parameters:
@@ -1176,6 +1481,8 @@ void RpcRegisterInfraHandlers(RpcServer &server)
 	server.RegisterHandler("rail.buildStation", HandleRailBuildStation);
 	server.RegisterHandler("rail.buildSignal", HandleRailBuildSignal);
 	server.RegisterHandler("rail.removeSignal", HandleRailRemoveSignal);
+	server.RegisterHandler("rail.buildTrackLine", HandleRailBuildTrackLine);
+	server.RegisterHandler("rail.signalLine", HandleRailSignalLine);
 	server.RegisterHandler("marine.buildDock", HandleMarineBuildDock);
 	server.RegisterHandler("marine.buildDepot", HandleMarineBuildDepot);
 	server.RegisterHandler("airport.build", HandleAirportBuild);

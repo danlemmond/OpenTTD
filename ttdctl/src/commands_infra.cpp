@@ -654,3 +654,120 @@ int HandleAirportBuild(RpcClient &client, const CliOptions &opts)
 		return 1;
 	}
 }
+
+int HandleRailBuildTrackLine(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 4) {
+			std::cerr << "Error: start and end coordinates required\n";
+			std::cerr << "Usage: ttdctl rail track-line <start_x> <start_y> <end_x> <end_y>\n";
+			std::cerr << "Builds a line of track from start to end, including corners if needed.\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["start_x"] = std::stoi(opts.args[0]);
+		params["start_y"] = std::stoi(opts.args[1]);
+		params["end_x"] = std::stoi(opts.args[2]);
+		params["end_y"] = std::stoi(opts.args[3]);
+
+		/* Parse options */
+		for (size_t i = 4; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		auto result = client.Call("rail.buildTrackLine", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built track line from (" << result["start_x"].get<int>()
+			          << ", " << result["start_y"].get<int>() << ") to ("
+			          << result["end_x"].get<int>() << ", " << result["end_y"].get<int>() << ")\n";
+			std::cout << "Segments built:\n";
+			for (const auto &seg : result["segments"]) {
+				if (seg.contains("tile")) {
+					std::cout << "  Corner at tile " << seg["tile"].get<int>()
+					          << " (" << seg["track"].get<std::string>() << "): "
+					          << (seg["success"].get<bool>() ? "OK" : "FAILED") << "\n";
+				} else {
+					std::cout << "  Track " << seg["track"].get<std::string>()
+					          << " from " << seg["start_tile"].get<int>()
+					          << " to " << seg["end_tile"].get<int>() << ": "
+					          << (seg["success"].get<bool>() ? "OK" : "FAILED") << "\n";
+				}
+			}
+		} else {
+			std::cerr << "Failed to build track line\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+int HandleRailSignalLine(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 4) {
+			std::cerr << "Error: start and end coordinates required\n";
+			std::cerr << "Usage: ttdctl rail signal-line <start_x> <start_y> <end_x> <end_y> [--type <signal_type>] [--density <spacing>]\n";
+			std::cerr << "Signal types: block, entry, exit, combo, pbs, pbs_oneway (default)\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["start_x"] = std::stoi(opts.args[0]);
+		params["start_y"] = std::stoi(opts.args[1]);
+		params["end_x"] = std::stoi(opts.args[2]);
+		params["end_y"] = std::stoi(opts.args[3]);
+
+		/* Parse options */
+		for (size_t i = 4; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--type" && i + 1 < opts.args.size()) {
+				params["signal_type"] = opts.args[++i];
+			} else if (opts.args[i] == "--density" && i + 1 < opts.args.size()) {
+				params["signal_density"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--track" && i + 1 < opts.args.size()) {
+				params["track"] = opts.args[++i];
+			} else if (opts.args[i] == "--variant" && i + 1 < opts.args.size()) {
+				params["variant"] = opts.args[++i];
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		auto result = client.Call("rail.signalLine", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built " << result["signal_type"].get<std::string>()
+			          << " signals from (" << result["start_x"].get<int>()
+			          << ", " << result["start_y"].get<int>() << ") to ("
+			          << result["end_x"].get<int>() << ", " << result["end_y"].get<int>() << ")"
+			          << " on " << result["track"].get<std::string>() << " track"
+			          << " (density: " << result["signal_density"].get<int>()
+			          << ", cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build signal line: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}

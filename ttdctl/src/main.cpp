@@ -34,6 +34,8 @@ int main(int argc, char *argv[])
 			return HandleCompanyList(client, opts);
 		} else if (opts.action == "setloan") {
 			return HandleCompanySetLoan(client, opts);
+		} else if (opts.action == "alerts") {
+			return HandleCompanyAlerts(client, opts);
 		}
 	} else if (opts.resource == "subsidy") {
 		if (opts.action == "list" || opts.action.empty()) {
@@ -66,6 +68,8 @@ int main(int argc, char *argv[])
 			return HandleVehicleTurnaround(client, opts);
 		} else if (opts.action == "refit") {
 			return HandleVehicleRefit(client, opts);
+		} else if (opts.action == "attach") {
+			return HandleVehicleAttach(client, opts);
 		}
 	} else if (opts.resource == "engine") {
 		if (opts.action == "list" || opts.action.empty()) {
@@ -80,6 +84,8 @@ int main(int argc, char *argv[])
 			return HandleStationGet(client, opts);
 		} else if (opts.action == "flow") {
 			return HandleStationGetCargoFlow(client, opts);
+		} else if (opts.action == "coverage") {
+			return HandleStationCoverage(client, opts);
 		}
 	} else if (opts.resource == "industry") {
 		if (opts.action == "list" || opts.action.empty()) {
@@ -124,6 +130,10 @@ int main(int argc, char *argv[])
 			return HandleRailBuildSignal(client, opts);
 		} else if (opts.action == "remove-signal") {
 			return HandleRailRemoveSignal(client, opts);
+		} else if (opts.action == "track-line") {
+			return HandleRailBuildTrackLine(client, opts);
+		} else if (opts.action == "signal-line") {
+			return HandleRailSignalLine(client, opts);
 		}
 	} else if (opts.resource == "marine") {
 		if (opts.action == "dock") {
@@ -136,6 +146,10 @@ int main(int argc, char *argv[])
 			return HandleAirportBuild(client, opts);
 		} else if (opts.action == "info" || opts.action.empty()) {
 			return HandleAirportInfo(client, opts);
+		}
+	} else if (opts.resource == "route") {
+		if (opts.action == "check") {
+			return HandleRouteCheck(client, opts);
 		}
 	} else if (opts.resource == "town") {
 		if (opts.action == "list" || opts.action.empty()) {
