@@ -4,10 +4,16 @@
 
 This document outlines the plan to integrate a Claude Code AI agent terminal into OpenTTD, similar to the RampLabs experiment done with OpenRCT2.
 
-## Status: Phase 3 Complete - Full RPC API + Infrastructure + Economic Analytics
+## Status: Phase 4 Complete - Terminal Window with Claude Code Integration
 
 Started: 2025-12-25
 Last Updated: 2025-12-25
+
+**Completed:**
+- ✅ Phase 1: JSON-RPC Server Foundation
+- ✅ Phase 2: Core RPC Handlers (Query + Action + Infrastructure)
+- ✅ Phase 3: Camera/Viewport Control for Streaming
+- ✅ Phase 4: Terminal Window (libvterm + PTY + scrollback)
 
 ---
 
@@ -1036,11 +1042,13 @@ For streaming support, added activity tracking and camera control:
 #### RPC Handlers Remaining
 All infrastructure building handlers are now complete!
 
-#### Phase 4: Terminal Window - NOT STARTED
-- [ ] ShellProcess (PTY abstraction)
-- [ ] TerminalSession (libvterm integration)
-- [ ] AIAgentLaunch (spawn Claude)
-- [ ] Terminal window GUI (`WC_AI_AGENT_TERMINAL`)
+#### Phase 4: Terminal Window - COMPLETE ✅
+- [x] ShellProcess (PTY abstraction)
+- [x] TerminalSession (libvterm integration)
+- [x] AIAgentLaunch (spawn Claude)
+- [x] Terminal window GUI (`WC_AI_AGENT_TERMINAL`)
+- [x] Scrollback buffer with scrollbar
+- [x] JetBrains Mono Nerd Font support for Unicode
 
 #### Phase 5: Multi-Agent System - NOT STARTED
 - [ ] Round system (5-minute chunks)
@@ -1063,10 +1071,28 @@ src/rpc/
 ├── rpc_handlers_meta.cpp       # Game control handlers
 └── rpc_handlers_viewport.cpp   # Camera control and activity tracking
 
+src/terminal/
+├── CMakeLists.txt              # Build configuration
+├── ShellProcess.cpp            # PTY abstraction (forkpty, read/write)
+├── ShellProcess.h              # PTY interface
+├── TerminalSession.cpp         # libvterm wrapper with scrollback
+├── TerminalSession.h           # Terminal emulation interface
+├── AIAgentLaunch.cpp           # Claude Code spawning logic
+└── AIAgentLaunch.h             # Launch configuration
+
+src/
+├── ai_agent_terminal_gui.cpp   # Terminal window GUI
+├── ai_agent_terminal_gui.h     # Window declarations
+└── widgets/
+    └── ai_agent_terminal_widget.h  # Widget IDs
+
+cmake/
+└── FindVterm.cmake             # CMake module for libvterm detection
+
 ttdctl/
 ├── CMakeLists.txt
 └── src/
-    ├── main.cpp                # Command routing (123 lines)
+    ├── main.cpp                # Command routing
     ├── cli_common.h            # Common types and declarations
     ├── cli_common.cpp          # Argument parsing and help text
     ├── rpc_client.h            # JSON-RPC client
@@ -1082,6 +1108,18 @@ ttdctl/
 ## Quick Start Guide for AI Agents (Post-Compaction)
 
 This section is for future Claude sessions that need to continue development or testing.
+
+### Dependencies
+
+The following dependencies are required for the AI Agent terminal:
+
+```bash
+# Install libvterm (terminal emulation library)
+brew install libvterm
+
+# Install JetBrains Mono Nerd Font (Unicode/emoji support)
+brew install --cask font-jetbrains-mono-nerd-font
+```
 
 ### Building OpenTTD
 
@@ -1100,6 +1138,34 @@ ninja -C build
 
 ### Starting the Game
 
+#### Font Configuration (Required for Terminal Window)
+
+The AI Agent terminal window requires JetBrains Mono Nerd Font for proper Unicode rendering.
+
+**1. Install the font (one-time setup):**
+```bash
+brew install --cask font-jetbrains-mono-nerd-font
+```
+
+**2. Configure OpenTTD to use the font:**
+
+Edit `~/Documents/OpenTTD/openttd.cfg` and set:
+```ini
+[misc]
+small_font = /Users/<username>/Library/Fonts/JetBrainsMonoNerdFontMono-Regular.ttf
+medium_font = /Users/<username>/Library/Fonts/JetBrainsMonoNerdFontMono-Regular.ttf
+large_font = /Users/<username>/Library/Fonts/JetBrainsMonoNerdFontMono-Regular.ttf
+mono_font = /Users/<username>/Library/Fonts/JetBrainsMonoNerdFontMono-Regular.ttf
+small_size = 10
+medium_size = 12
+large_size = 16
+mono_size = 12
+```
+
+Replace `<username>` with your macOS username (e.g., `dlemmond`).
+
+#### Launch Commands
+
 ```bash
 # Option 1: Start with a saved game (recommended for testing)
 /Users/dlemmond/OpenTTD/OpenTTD/build/openttd -g &
@@ -1109,6 +1175,15 @@ ninja -C build
 sleep 5
 /Users/dlemmond/OpenTTD/OpenTTD/build/ttdctl/ttdctl game newgame
 ```
+
+#### Opening the AI Agent Terminal
+
+Once in-game:
+1. Open the in-game console with the **`** (backtick) key
+2. Type `ai_agent_terminal` and press Enter
+3. The terminal window will open and automatically launch Claude Code
+
+Alternatively, the terminal can be opened from the toolbar if configured.
 
 ### Testing RPC Connection
 
