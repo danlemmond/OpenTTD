@@ -34,6 +34,31 @@
 #include "../safeguards.h"
 
 /**
+ * Extract error message from a failed CommandCost.
+ * @param cost The CommandCost to extract the error from.
+ * @return Human-readable error message string.
+ */
+static std::string GetCommandErrorMessage(const CommandCost &cost)
+{
+	if (cost.Succeeded()) return "";
+
+	StringID msg = cost.GetErrorMessage();
+	if (msg == INVALID_STRING_ID) {
+		return "Unknown error";
+	}
+
+	std::string error = StrMakeValid(GetString(msg));
+
+	/* Check for extra message */
+	StringID extra = cost.GetExtraErrorMessage();
+	if (extra != INVALID_STRING_ID) {
+		error += ": " + StrMakeValid(GetString(extra));
+	}
+
+	return error;
+}
+
+/**
  * Parse a direction string to DiagDirection.
  * Valid values: "ne", "se", "sw", "nw" (or 0-3)
  */
@@ -306,7 +331,7 @@ static nlohmann::json HandleRoadBuild(const nlohmann::json &params)
 	result["cost"] = cost.GetCost().base();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build road";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -357,7 +382,7 @@ static nlohmann::json HandleRoadBuildDepot(const nlohmann::json &params)
 	result["cost"] = cost.GetCost().base();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build depot - check adjacent road and direction";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -429,7 +454,7 @@ static nlohmann::json HandleRoadBuildStop(const nlohmann::json &params)
 	result["cost"] = cost.GetCost().base();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build stop - check location, direction, and road access";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -496,7 +521,7 @@ static nlohmann::json HandleRailBuildTrack(const nlohmann::json &params)
 	result["cost"] = cost.GetCost().base();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build rail track - check terrain and obstacles";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -547,7 +572,7 @@ static nlohmann::json HandleRailBuildDepot(const nlohmann::json &params)
 	result["cost"] = cost.GetCost().base();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build depot - check terrain and track connection";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -610,7 +635,7 @@ static nlohmann::json HandleRailBuildStation(const nlohmann::json &params)
 	result["cost"] = cost.GetCost().base();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build station - check location and track alignment";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -800,7 +825,7 @@ static nlohmann::json HandleRailBuildSignal(const nlohmann::json &params)
 			default: result["track"] = static_cast<int>(track); break;
 		}
 	} else {
-		result["error"] = "Failed to build signal - check tile has rail track, no overlapping tracks, and correct ownership";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -874,7 +899,7 @@ static nlohmann::json HandleRailRemoveSignal(const nlohmann::json &params)
 	if (cost.Succeeded()) {
 		result["refund"] = -cost.GetCost().base(); /* Cost is negative for removal */
 	} else {
-		result["error"] = "Failed to remove signal - check tile has a signal on the specified track";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -1179,7 +1204,7 @@ static nlohmann::json HandleRailSignalLine(const nlohmann::json &params)
 	result["signal_density"] = signal_density;
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build signal line - check track exists and is accessible";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -1249,7 +1274,7 @@ static nlohmann::json HandleMarineBuildDock(const nlohmann::json &params)
 	result["cost"] = cost.GetCost().base();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build dock - check tile has water access and correct slope";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -1324,7 +1349,7 @@ static nlohmann::json HandleMarineBuildDepot(const nlohmann::json &params)
 	result["cost"] = cost.GetCost().base();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build ship depot - check tile is flat water";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -1449,7 +1474,7 @@ static nlohmann::json HandleAirportBuild(const nlohmann::json &params)
 	result["cost"] = cost.GetCost().base();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build airport - check tile is flat land with enough space";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -1565,7 +1590,7 @@ static nlohmann::json HandleRailBuildBridge(const nlohmann::json &params)
 	result["cost"] = cost.GetCost().base();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build bridge - check endpoints are valid, terrain allows bridging, and bridge type supports the length";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -1641,7 +1666,7 @@ static nlohmann::json HandleRoadBuildBridge(const nlohmann::json &params)
 	result["cost"] = cost.GetCost().base();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build bridge - check endpoints are valid, terrain allows bridging, and bridge type supports the length";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -1715,7 +1740,7 @@ static nlohmann::json HandleRailBuildTunnel(const nlohmann::json &params)
 	}
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build tunnel - tile must be at base of slope facing into a hill";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -1789,7 +1814,7 @@ static nlohmann::json HandleRoadBuildTunnel(const nlohmann::json &params)
 	}
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to build tunnel - tile must be at base of slope facing into a hill";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;

@@ -42,6 +42,31 @@
 
 #include "../safeguards.h"
 
+/**
+ * Extract error message from a failed CommandCost.
+ * @param cost The CommandCost to extract the error from.
+ * @return Human-readable error message string.
+ */
+static std::string GetCommandErrorMessage(const CommandCost &cost)
+{
+	if (cost.Succeeded()) return "";
+
+	StringID msg = cost.GetErrorMessage();
+	if (msg == INVALID_STRING_ID) {
+		return "Unknown error";
+	}
+
+	std::string error = StrMakeValid(GetString(msg));
+
+	/* Check for extra message */
+	StringID extra = cost.GetExtraErrorMessage();
+	if (extra != INVALID_STRING_ID) {
+		error += ": " + StrMakeValid(GetString(extra));
+	}
+
+	return error;
+}
+
 static nlohmann::json HandleVehicleStartStop(const nlohmann::json &params)
 {
 	if (!params.contains("vehicle_id")) {
@@ -69,7 +94,7 @@ static nlohmann::json HandleVehicleStartStop(const nlohmann::json &params)
 	result["success"] = cost.Succeeded();
 
 	if (cost.Failed()) {
-		result["error"] = "Command failed";
+		result["error"] = GetCommandErrorMessage(cost);
 	} else {
 		/* Re-fetch vehicle state after command */
 		v = Vehicle::GetIfValid(vid);
@@ -120,7 +145,7 @@ static nlohmann::json HandleVehicleSendToDepot(const nlohmann::json &params)
 	result["service_only"] = service_only;
 
 	if (cost.Failed()) {
-		result["error"] = "Command failed - vehicle may already be heading to depot or no depot available";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -240,7 +265,7 @@ static nlohmann::json HandleOrderAppend(const nlohmann::json &params)
 	result["destination_name"] = StrMakeValid(st->GetCachedName());
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to append order";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -282,7 +307,7 @@ static nlohmann::json HandleOrderRemove(const nlohmann::json &params)
 	result["removed_index"] = order_idx;
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to remove order";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -393,7 +418,7 @@ static nlohmann::json HandleVehicleBuild(const nlohmann::json &params)
 			result["stopped"] = v->First()->IsStoppedInDepot() || v->vehstatus.Test(VehState::Stopped);
 		}
 	} else {
-		result["error"] = "Failed to build vehicle - check depot, engine, and funds";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -454,7 +479,7 @@ static nlohmann::json HandleVehicleSell(const nlohmann::json &params)
 		Money value = -cost.GetCost();
 		result["value"] = value < 0 ? 0 : value.base();
 	} else {
-		result["error"] = "Failed to sell vehicle - ensure it is stopped in a depot";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -542,7 +567,7 @@ static nlohmann::json HandleVehicleClone(const nlohmann::json &params)
 			result["vehicle_name"] = StrMakeValid(GetString(STR_VEHICLE_NAME, v->index));
 		}
 	} else {
-		result["error"] = "Failed to clone vehicle - check depot, funds, and vehicle availability";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -610,7 +635,7 @@ static nlohmann::json HandleCompanySetLoan(const nlohmann::json &params)
 	result["max_loan"] = _economy.max_loan.base();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to set loan - check amount is within valid range and is a multiple of loan interval";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -682,7 +707,7 @@ static nlohmann::json HandleVehicleRefit(const nlohmann::json &params)
 		result["capacity"] = capacity;
 		result["cost"] = cost.GetCost().base();
 	} else {
-		result["error"] = "Failed to refit vehicle - check cargo type is valid for this vehicle";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -766,7 +791,7 @@ static nlohmann::json HandleVehicleAttach(const nlohmann::json &params)
 	result["success"] = cost.Succeeded();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to attach wagon - check that both vehicles are in the same depot";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -865,7 +890,7 @@ static nlohmann::json HandleOrderInsert(const nlohmann::json &params)
 	result["destination_name"] = StrMakeValid(st->GetCachedName());
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to insert order";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -961,7 +986,7 @@ static nlohmann::json HandleOrderSetFlags(const nlohmann::json &params)
 	result["partial_success"] = any_succeeded && any_failed;
 
 	if (any_failed && !any_succeeded) {
-		result["error"] = "Failed to modify order flags";
+		result["error"] = "Failed to modify order flags";  /* No single CommandCost to extract from */
 	}
 
 	return result;
@@ -1032,7 +1057,7 @@ static nlohmann::json HandleOrderShare(const nlohmann::json &params)
 	result["success"] = cost.Succeeded();
 
 	if (cost.Failed()) {
-		result["error"] = "Failed to " + mode + " orders";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -1113,7 +1138,7 @@ static nlohmann::json HandleTownPerformAction(const nlohmann::json &params)
 	if (cost.Succeeded()) {
 		result["cost"] = cost.GetCost().base();
 	} else {
-		result["error"] = "Failed to perform town action - check town rating and requirements";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -1198,7 +1223,7 @@ static nlohmann::json HandleStationRemove(const nlohmann::json &params)
 	if (cost.Succeeded()) {
 		RpcRecordActivity(tile, "station.remove");
 	} else {
-		result["error"] = "Failed to remove station - check ownership and that no vehicles are using it";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -1265,7 +1290,7 @@ static nlohmann::json HandleDepotRemove(const nlohmann::json &params)
 	if (cost.Succeeded()) {
 		RpcRecordActivity(tile, "depot.remove");
 	} else {
-		result["error"] = "Failed to remove depot - ensure no vehicles are inside";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -1358,7 +1383,7 @@ static nlohmann::json HandleRailRemove(const nlohmann::json &params)
 	if (cost.Succeeded()) {
 		RpcRecordActivity(tile, "rail.remove");
 	} else {
-		result["error"] = "Failed to remove rail - check that specified track exists on tile";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
@@ -1469,7 +1494,7 @@ static nlohmann::json HandleRoadRemove(const nlohmann::json &params)
 		result["refund"] = refund.base();
 		RpcRecordActivity(start_tile, "road.remove");
 	} else {
-		result["error"] = "Failed to remove road - may be protected by town or in use";
+		result["error"] = GetCommandErrorMessage(cost);
 	}
 
 	return result;
