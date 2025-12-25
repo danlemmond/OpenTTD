@@ -92,6 +92,8 @@ int main(int argc, char *argv[])
 			return HandleIndustryList(client, opts);
 		} else if (opts.action == "get") {
 			return HandleIndustryGet(client, opts);
+		} else if (opts.action == "nearest") {
+			return HandleIndustryNearest(client, opts);
 		} else if (opts.action == "stockpile") {
 			return HandleIndustryGetStockpile(client, opts);
 		} else if (opts.action == "acceptance") {
@@ -104,6 +106,8 @@ int main(int argc, char *argv[])
 			return HandleMapDistance(client, opts);
 		} else if (opts.action == "scan") {
 			return HandleMapScan(client, opts);
+		} else if (opts.action == "terrain") {
+			return HandleMapTerrain(client, opts);
 		}
 	} else if (opts.resource == "tile") {
 		if (opts.action == "get" || opts.action.empty()) {
@@ -168,6 +172,8 @@ int main(int argc, char *argv[])
 			return HandleTownList(client, opts);
 		} else if (opts.action == "get") {
 			return HandleTownGet(client, opts);
+		} else if (opts.action == "nearest") {
+			return HandleTownNearest(client, opts);
 		} else if (opts.action == "action") {
 			return HandleTownPerformAction(client, opts);
 		}

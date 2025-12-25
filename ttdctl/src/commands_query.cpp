@@ -421,6 +421,70 @@ int HandleIndustryGet(RpcClient &client, const CliOptions &opts)
 	}
 }
 
+int HandleIndustryNearest(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: requires coordinates: x y\n";
+			std::cerr << "Usage: ttdctl industry nearest <x> <y> [--produces <cargo>] [--accepts <cargo>]\n";
+			return 1;
+		}
+
+		nlohmann::json params = nlohmann::json::object();
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		/* Parse options */
+		for (size_t i = 2; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--produces" && i + 1 < opts.args.size()) {
+				params["produces"] = opts.args[++i];
+			} else if (opts.args[i] == "--accepts" && i + 1 < opts.args.size()) {
+				params["accepts"] = opts.args[++i];
+			}
+		}
+
+		auto result = client.Call("industry.nearest", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << "Nearest Industry\n";
+		std::cout << "----------------\n";
+		std::cout << "Name:     " << result["name"].get<std::string>() << " (#" << result["id"].get<int>() << ")\n";
+		std::cout << "Location: (" << result["location"]["x"].get<int>() << ", " << result["location"]["y"].get<int>() << ")\n";
+		std::cout << "Distance: " << result["distance"].get<int>() << " tiles\n";
+
+		if (!result["produces"].empty()) {
+			std::cout << "Produces: ";
+			bool first = true;
+			for (const auto &p : result["produces"]) {
+				if (!first) std::cout << ", ";
+				std::cout << p.get<std::string>();
+				first = false;
+			}
+			std::cout << "\n";
+		}
+
+		if (!result["accepts"].empty()) {
+			std::cout << "Accepts:  ";
+			bool first = true;
+			for (const auto &a : result["accepts"]) {
+				if (!first) std::cout << ", ";
+				std::cout << a.get<std::string>();
+				first = false;
+			}
+			std::cout << "\n";
+		}
+
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
 int HandleMapInfo(RpcClient &client, const CliOptions &opts)
 {
 	try {
@@ -562,6 +626,70 @@ int HandleMapScan(RpcClient &client, const CliOptions &opts)
 	}
 }
 
+int HandleMapTerrain(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 4) {
+			std::cerr << "Error: requires coordinates: x1 y1 x2 y2\n";
+			std::cerr << "Usage: ttdctl map terrain <x1> <y1> <x2> <y2>\n";
+			return 1;
+		}
+
+		nlohmann::json params = nlohmann::json::object();
+		params["x1"] = std::stoi(opts.args[0]);
+		params["y1"] = std::stoi(opts.args[1]);
+		params["x2"] = std::stoi(opts.args[2]);
+		params["y2"] = std::stoi(opts.args[3]);
+
+		auto result = client.Call("map.terrain", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << "Terrain Analysis: (" << result["region"]["x1"].get<int>() << ","
+		          << result["region"]["y1"].get<int>() << ") to ("
+		          << result["region"]["x2"].get<int>() << ","
+		          << result["region"]["y2"].get<int>() << ")\n";
+		std::cout << "-------------------------------------------\n";
+		std::cout << "Total tiles:     " << result["total_tiles"].get<int>() << "\n";
+		std::cout << "Flat tiles:      " << result["flat_tiles"].get<int>() << "\n";
+		std::cout << "Slope tiles:     " << result["slope_tiles"].get<int>() << "\n";
+		std::cout << "Height range:    " << result["height_range"]["min"].get<int>()
+		          << " - " << result["height_range"]["max"].get<int>() << "\n";
+		std::cout << "\nTile Types:\n";
+		auto &types = result["tile_types"];
+		std::cout << "  Clear:     " << types["clear"].get<int>() << "\n";
+		std::cout << "  Water:     " << types["water"].get<int>() << "\n";
+		std::cout << "  Road:      " << types["road"].get<int>() << "\n";
+		std::cout << "  Rail:      " << types["rail"].get<int>() << "\n";
+		std::cout << "  Building:  " << types["building"].get<int>() << "\n";
+		std::cout << "  Industry:  " << types["industry"].get<int>() << "\n";
+		std::cout << "  Station:   " << types["station"].get<int>() << "\n";
+
+		std::cout << "\nBuildable tiles: " << result["buildable_tiles"].get<int>() << "\n";
+		if (result["max_water_crossing"].get<int>() > 0) {
+			std::cout << "Max water span:  " << result["max_water_crossing"].get<int>() << " tiles (needs bridge)\n";
+		}
+
+		std::cout << "\nCost Estimates:\n";
+		auto &costs = result["cost_estimates"];
+		std::cout << "  Rail:   $" << costs["rail"].get<int64_t>() << "\n";
+		std::cout << "  Road:   $" << costs["road"].get<int64_t>() << "\n";
+		if (costs["bridge"].get<int64_t>() > 0) {
+			std::cout << "  Bridge: $" << costs["bridge"].get<int64_t>() << "\n";
+		}
+
+		std::cout << "\nDifficulty: " << result["difficulty"].get<std::string>() << "\n";
+
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
 int HandleTileGet(RpcClient &client, const CliOptions &opts)
 {
 	try {
@@ -674,6 +802,51 @@ int HandleTownGet(RpcClient &client, const CliOptions &opts)
 				std::cout << "  Company " << r["company"].get<int>() << ": " << r["rating"].get<int>() << "\n";
 			}
 		}
+
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+int HandleTownNearest(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: requires coordinates: x y\n";
+			std::cerr << "Usage: ttdctl town nearest <x> <y> [--min-pop <n>] [--city]\n";
+			return 1;
+		}
+
+		nlohmann::json params = nlohmann::json::object();
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		/* Parse options */
+		for (size_t i = 2; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--min-pop" && i + 1 < opts.args.size()) {
+				params["min_pop"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--city") {
+				params["is_city"] = true;
+			}
+		}
+
+		auto result = client.Call("town.nearest", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << "Nearest Town\n";
+		std::cout << "------------\n";
+		std::cout << "Name:       " << result["name"].get<std::string>() << " (#" << result["id"].get<int>() << ")\n";
+		std::cout << "Location:   (" << result["location"]["x"].get<int>() << ", " << result["location"]["y"].get<int>() << ")\n";
+		std::cout << "Distance:   " << result["distance"].get<int>() << " tiles\n";
+		std::cout << "Population: " << result["population"].get<int>() << "\n";
+		std::cout << "Houses:     " << result["houses"].get<int>() << "\n";
+		std::cout << "City:       " << (result["is_city"].get<bool>() ? "Yes" : "No") << "\n";
 
 		return 0;
 	} catch (const std::exception &e) {

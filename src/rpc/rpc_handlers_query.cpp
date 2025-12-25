@@ -595,6 +595,151 @@ static nlohmann::json HandleIndustryGet(const nlohmann::json &params)
 	return result;
 }
 
+/**
+ * Handler for industry.nearest - Find nearest industry matching criteria.
+ *
+ * Parameters:
+ *   x, y: Reference coordinates (required)
+ *   produces: Cargo type ID or name that industry must produce (optional)
+ *   accepts: Cargo type ID or name that industry must accept (optional)
+ *
+ * Returns the nearest matching industry with distance.
+ */
+static nlohmann::json HandleIndustryNearest(const nlohmann::json &params)
+{
+	if (!params.contains("x") || !params.contains("y")) {
+		throw std::runtime_error("Missing required parameters: x, y");
+	}
+
+	uint ref_x = params["x"].get<uint>();
+	uint ref_y = params["y"].get<uint>();
+	if (ref_x >= Map::SizeX() || ref_y >= Map::SizeY()) {
+		throw std::runtime_error("Coordinates out of bounds");
+	}
+	TileIndex ref_tile = TileXY(ref_x, ref_y);
+
+	/* Parse cargo filter - can be ID (int) or name (string) */
+	CargoType filter_produces = INVALID_CARGO;
+	CargoType filter_accepts = INVALID_CARGO;
+
+	if (params.contains("produces")) {
+		if (params["produces"].is_number()) {
+			filter_produces = static_cast<CargoType>(params["produces"].get<int>());
+		} else if (params["produces"].is_string()) {
+			std::string cargo_name = params["produces"].get<std::string>();
+			for (const CargoSpec *cs : CargoSpec::Iterate()) {
+				if (cs->IsValid()) {
+					std::string name = StrMakeValid(GetString(cs->name));
+					/* Case-insensitive comparison */
+					std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+					std::transform(cargo_name.begin(), cargo_name.end(), cargo_name.begin(), ::tolower);
+					if (name == cargo_name) {
+						filter_produces = cs->Index();
+						break;
+					}
+				}
+			}
+			if (!IsValidCargoType(filter_produces)) {
+				throw std::runtime_error("Unknown cargo type: " + params["produces"].get<std::string>());
+			}
+		}
+	}
+
+	if (params.contains("accepts")) {
+		if (params["accepts"].is_number()) {
+			filter_accepts = static_cast<CargoType>(params["accepts"].get<int>());
+		} else if (params["accepts"].is_string()) {
+			std::string cargo_name = params["accepts"].get<std::string>();
+			for (const CargoSpec *cs : CargoSpec::Iterate()) {
+				if (cs->IsValid()) {
+					std::string name = StrMakeValid(GetString(cs->name));
+					std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+					std::transform(cargo_name.begin(), cargo_name.end(), cargo_name.begin(), ::tolower);
+					if (name == cargo_name) {
+						filter_accepts = cs->Index();
+						break;
+					}
+				}
+			}
+			if (!IsValidCargoType(filter_accepts)) {
+				throw std::runtime_error("Unknown cargo type: " + params["accepts"].get<std::string>());
+			}
+		}
+	}
+
+	const Industry *nearest = nullptr;
+	uint min_distance = UINT_MAX;
+
+	for (const Industry *ind : Industry::Iterate()) {
+		/* Check cargo filter */
+		if (IsValidCargoType(filter_produces)) {
+			bool found = false;
+			for (const auto &p : ind->produced) {
+				if (p.cargo == filter_produces) {
+					found = true;
+					break;
+				}
+			}
+			if (!found) continue;
+		}
+
+		if (IsValidCargoType(filter_accepts)) {
+			bool found = false;
+			for (const auto &a : ind->accepted) {
+				if (a.cargo == filter_accepts) {
+					found = true;
+					break;
+				}
+			}
+			if (!found) continue;
+		}
+
+		uint distance = DistanceManhattan(ref_tile, ind->location.tile);
+		if (distance < min_distance) {
+			min_distance = distance;
+			nearest = ind;
+		}
+	}
+
+	if (nearest == nullptr) {
+		throw std::runtime_error("No matching industry found");
+	}
+
+	nlohmann::json result;
+	result["id"] = nearest->index.base();
+	result["name"] = StrMakeValid(GetString(STR_INDUSTRY_NAME, nearest->index));
+	result["type"] = nearest->type;
+	result["location"] = {
+		{"tile", nearest->location.tile != INVALID_TILE ? nearest->location.tile.base() : 0},
+		{"x", TileX(nearest->location.tile)},
+		{"y", TileY(nearest->location.tile)}
+	};
+	result["distance"] = min_distance;
+
+	/* Include what it produces/accepts */
+	nlohmann::json produces = nlohmann::json::array();
+	for (const auto &p : nearest->produced) {
+		if (!IsValidCargoType(p.cargo)) continue;
+		const CargoSpec *cs = CargoSpec::Get(p.cargo);
+		if (cs != nullptr && cs->IsValid()) {
+			produces.push_back(StrMakeValid(GetString(cs->name)));
+		}
+	}
+	result["produces"] = produces;
+
+	nlohmann::json accepts = nlohmann::json::array();
+	for (const auto &a : nearest->accepted) {
+		if (!IsValidCargoType(a.cargo)) continue;
+		const CargoSpec *cs = CargoSpec::Get(a.cargo);
+		if (cs != nullptr && cs->IsValid()) {
+			accepts.push_back(StrMakeValid(GetString(cs->name)));
+		}
+	}
+	result["accepts"] = accepts;
+
+	return result;
+}
+
 static nlohmann::json HandleMapInfo([[maybe_unused]] const nlohmann::json &params)
 {
 	nlohmann::json result;
@@ -738,6 +883,69 @@ static nlohmann::json HandleTownGet(const nlohmann::json &params)
 		}
 	}
 	result["ratings"] = ratings;
+
+	return result;
+}
+
+/**
+ * Handler for town.nearest - Find nearest town matching criteria.
+ *
+ * Parameters:
+ *   x, y: Reference coordinates (required)
+ *   min_pop: Minimum population (optional)
+ *   is_city: If true, only match cities (optional)
+ *
+ * Returns the nearest matching town with distance.
+ */
+static nlohmann::json HandleTownNearest(const nlohmann::json &params)
+{
+	if (!params.contains("x") || !params.contains("y")) {
+		throw std::runtime_error("Missing required parameters: x, y");
+	}
+
+	uint ref_x = params["x"].get<uint>();
+	uint ref_y = params["y"].get<uint>();
+	if (ref_x >= Map::SizeX() || ref_y >= Map::SizeY()) {
+		throw std::runtime_error("Coordinates out of bounds");
+	}
+	TileIndex ref_tile = TileXY(ref_x, ref_y);
+
+	uint min_pop = params.value("min_pop", 0);
+	bool require_city = params.value("is_city", false);
+
+	const Town *nearest = nullptr;
+	uint min_distance = UINT_MAX;
+
+	for (const Town *t : Town::Iterate()) {
+		/* Check population filter */
+		if (t->cache.population < min_pop) continue;
+
+		/* Check city filter */
+		if (require_city && !t->larger_town) continue;
+
+		uint distance = DistanceManhattan(ref_tile, t->xy);
+		if (distance < min_distance) {
+			min_distance = distance;
+			nearest = t;
+		}
+	}
+
+	if (nearest == nullptr) {
+		throw std::runtime_error("No matching town found");
+	}
+
+	nlohmann::json result;
+	result["id"] = nearest->index.base();
+	result["name"] = StrMakeValid(GetString(STR_TOWN_NAME, nearest->index));
+	result["location"] = {
+		{"tile", nearest->xy != INVALID_TILE ? nearest->xy.base() : 0},
+		{"x", TileX(nearest->xy)},
+		{"y", TileY(nearest->xy)}
+	};
+	result["distance"] = min_distance;
+	result["population"] = nearest->cache.population;
+	result["houses"] = nearest->cache.num_houses;
+	result["is_city"] = nearest->larger_town;
 
 	return result;
 }
@@ -944,6 +1152,175 @@ static nlohmann::json HandleMapScan(const nlohmann::json &params)
 		legend.push_back({{"symbol", std::string(1, pair.first)}, {"label", pair.second}});
 	}
 	result["legend"] = legend;
+
+	return result;
+}
+
+/**
+ * Handler for map.terrain - Analyze terrain between two points.
+ *
+ * Parameters:
+ *   x1, y1: Start coordinates (required)
+ *   x2, y2: End coordinates (required)
+ *
+ * Returns terrain analysis including tile counts, height range, and estimated costs.
+ */
+static nlohmann::json HandleMapTerrain(const nlohmann::json &params)
+{
+	if (!params.contains("x1") || !params.contains("y1") ||
+	    !params.contains("x2") || !params.contains("y2")) {
+		throw std::runtime_error("Missing required parameters: x1, y1, x2, y2");
+	}
+
+	int x1 = params["x1"].get<int>();
+	int y1 = params["y1"].get<int>();
+	int x2 = params["x2"].get<int>();
+	int y2 = params["y2"].get<int>();
+
+	/* Validate bounds */
+	if (x1 < 0 || y1 < 0 || x2 < 0 || y2 < 0 ||
+	    x1 >= (int)Map::SizeX() || y1 >= (int)Map::SizeY() ||
+	    x2 >= (int)Map::SizeX() || y2 >= (int)Map::SizeY()) {
+		throw std::runtime_error("Coordinates out of bounds");
+	}
+
+	/* Ensure x1 <= x2 and y1 <= y2 */
+	if (x1 > x2) std::swap(x1, x2);
+	if (y1 > y2) std::swap(y1, y2);
+
+	/* Count tile types and terrain features */
+	int flat_tiles = 0;
+	int slope_tiles = 0;
+	int water_tiles = 0;
+	int clear_tiles = 0;
+	int road_tiles = 0;
+	int rail_tiles = 0;
+	int building_tiles = 0;
+	int industry_tiles = 0;
+	int station_tiles = 0;
+	int min_height = INT_MAX;
+	int max_height = 0;
+	int total_tiles = 0;
+
+	/* Track water segments for bridge estimation */
+	int current_water_run = 0;
+	int max_water_run = 0;
+
+	/* Scan the rectangular region */
+	for (int y = y1; y <= y2; y++) {
+		current_water_run = 0;
+		for (int x = x1; x <= x2; x++) {
+			TileIndex tile = TileXY(x, y);
+			total_tiles++;
+
+			int height = TileHeight(tile);
+			if (height < min_height) min_height = height;
+			if (height > max_height) max_height = height;
+
+			Slope slope = GetTileSlope(tile);
+			if (slope == SLOPE_FLAT) {
+				flat_tiles++;
+			} else {
+				slope_tiles++;
+			}
+
+			TileType tt = GetTileType(tile);
+			switch (tt) {
+				case MP_CLEAR:
+				case MP_TREES:
+					clear_tiles++;
+					current_water_run = 0;
+					break;
+				case MP_WATER:
+					water_tiles++;
+					current_water_run++;
+					if (current_water_run > max_water_run) {
+						max_water_run = current_water_run;
+					}
+					break;
+				case MP_ROAD:
+					road_tiles++;
+					current_water_run = 0;
+					break;
+				case MP_RAILWAY:
+					rail_tiles++;
+					current_water_run = 0;
+					break;
+				case MP_HOUSE:
+					building_tiles++;
+					current_water_run = 0;
+					break;
+				case MP_INDUSTRY:
+					industry_tiles++;
+					current_water_run = 0;
+					break;
+				case MP_STATION:
+					station_tiles++;
+					current_water_run = 0;
+					break;
+				default:
+					current_water_run = 0;
+					break;
+			}
+		}
+	}
+
+	/* Calculate buildable tiles (clear land that could have rail/road) */
+	int buildable_tiles = clear_tiles;
+
+	/* Estimate costs (rough approximations) */
+	int64_t est_rail_cost = buildable_tiles * 100 + slope_tiles * 200;
+	int64_t est_road_cost = buildable_tiles * 50 + slope_tiles * 100;
+
+	/* Bridge cost estimate if water crossing needed */
+	int64_t est_bridge_cost = 0;
+	if (max_water_run > 0) {
+		/* Rough bridge cost: base + per-tile cost */
+		est_bridge_cost = 5000 + max_water_run * 1500;
+	}
+
+	nlohmann::json result;
+	result["region"] = {
+		{"x1", x1}, {"y1", y1},
+		{"x2", x2}, {"y2", y2}
+	};
+	result["total_tiles"] = total_tiles;
+	result["flat_tiles"] = flat_tiles;
+	result["slope_tiles"] = slope_tiles;
+	result["height_range"] = {{"min", min_height}, {"max", max_height}};
+
+	result["tile_types"] = {
+		{"clear", clear_tiles},
+		{"water", water_tiles},
+		{"road", road_tiles},
+		{"rail", rail_tiles},
+		{"building", building_tiles},
+		{"industry", industry_tiles},
+		{"station", station_tiles}
+	};
+
+	result["buildable_tiles"] = buildable_tiles;
+	result["max_water_crossing"] = max_water_run;
+
+	result["cost_estimates"] = {
+		{"rail", est_rail_cost},
+		{"road", est_road_cost},
+		{"bridge", est_bridge_cost}
+	};
+
+	/* Difficulty assessment */
+	std::string difficulty;
+	int obstacle_pct = (water_tiles + building_tiles + industry_tiles) * 100 / std::max(1, total_tiles);
+	int slope_pct = slope_tiles * 100 / std::max(1, total_tiles);
+
+	if (obstacle_pct > 50 || max_water_run > 10) {
+		difficulty = "hard";
+	} else if (obstacle_pct > 20 || slope_pct > 40 || max_water_run > 5) {
+		difficulty = "medium";
+	} else {
+		difficulty = "easy";
+	}
+	result["difficulty"] = difficulty;
 
 	return result;
 }
@@ -2205,12 +2582,15 @@ void RpcRegisterQueryHandlers(RpcServer &server)
 	server.RegisterHandler("station.get", HandleStationGet);
 	server.RegisterHandler("industry.list", HandleIndustryList);
 	server.RegisterHandler("industry.get", HandleIndustryGet);
+	server.RegisterHandler("industry.nearest", HandleIndustryNearest);
 	server.RegisterHandler("map.info", HandleMapInfo);
 	server.RegisterHandler("map.distance", HandleMapDistance);
 	server.RegisterHandler("map.scan", HandleMapScan);
+	server.RegisterHandler("map.terrain", HandleMapTerrain);
 	server.RegisterHandler("tile.get", HandleTileGet);
 	server.RegisterHandler("town.list", HandleTownList);
 	server.RegisterHandler("town.get", HandleTownGet);
+	server.RegisterHandler("town.nearest", HandleTownNearest);
 	server.RegisterHandler("order.list", HandleOrderList);
 	server.RegisterHandler("engine.list", HandleEngineList);
 	server.RegisterHandler("engine.get", HandleEngineGet);
