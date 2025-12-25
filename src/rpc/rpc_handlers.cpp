@@ -27,6 +27,9 @@
 #include "../string_func.h"
 #include "../table/strings.h"
 #include "../order_base.h"
+#include "../command_func.h"
+#include "../vehicle_cmd.h"
+#include "../order_cmd.h"
 
 #include "../safeguards.h"
 
@@ -899,6 +902,224 @@ static nlohmann::json HandleMapScan(const nlohmann::json &params)
 	return result;
 }
 
+/* ===================== */
+/* === ACTION HANDLERS === */
+/* ===================== */
+
+static nlohmann::json HandleVehicleStartStop(const nlohmann::json &params)
+{
+	if (!params.contains("vehicle_id")) {
+		throw std::runtime_error("Missing required parameter: vehicle_id");
+	}
+
+	VehicleID vid = static_cast<VehicleID>(params["vehicle_id"].get<int>());
+	const Vehicle *v = Vehicle::GetIfValid(vid);
+	if (v == nullptr) {
+		throw std::runtime_error("Invalid vehicle ID");
+	}
+
+	/* Execute the start/stop command */
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+	CommandCost cost = Command<CMD_START_STOP_VEHICLE>::Do(flags, vid, false);
+
+	nlohmann::json result;
+	result["vehicle_id"] = vid.base();
+	result["success"] = cost.Succeeded();
+
+	if (cost.Failed()) {
+		result["error"] = "Command failed";
+	} else {
+		/* Re-fetch vehicle state after command */
+		v = Vehicle::GetIfValid(vid);
+		if (v != nullptr) {
+			result["stopped"] = v->IsStoppedInDepot() || v->vehstatus.Test(VehState::Stopped);
+		}
+	}
+
+	return result;
+}
+
+static nlohmann::json HandleVehicleSendToDepot(const nlohmann::json &params)
+{
+	if (!params.contains("vehicle_id")) {
+		throw std::runtime_error("Missing required parameter: vehicle_id");
+	}
+
+	VehicleID vid = static_cast<VehicleID>(params["vehicle_id"].get<int>());
+	const Vehicle *v = Vehicle::GetIfValid(vid);
+	if (v == nullptr) {
+		throw std::runtime_error("Invalid vehicle ID");
+	}
+
+	/* Check options */
+	bool service_only = params.value("service", false);
+
+	DepotCommandFlags depot_flags;
+	if (service_only) {
+		depot_flags.Set(DepotCommandFlag::Service);
+	}
+
+	/* Empty VehicleListIdentifier for single vehicle */
+	VehicleListIdentifier vli;
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+	CommandCost cost = Command<CMD_SEND_VEHICLE_TO_DEPOT>::Do(flags, vid, depot_flags, vli);
+
+	nlohmann::json result;
+	result["vehicle_id"] = vid.base();
+	result["success"] = cost.Succeeded();
+	result["service_only"] = service_only;
+
+	if (cost.Failed()) {
+		result["error"] = "Command failed - vehicle may already be heading to depot or no depot available";
+	}
+
+	return result;
+}
+
+static nlohmann::json HandleVehicleTurnAround(const nlohmann::json &params)
+{
+	if (!params.contains("vehicle_id")) {
+		throw std::runtime_error("Missing required parameter: vehicle_id");
+	}
+
+	VehicleID vid = static_cast<VehicleID>(params["vehicle_id"].get<int>());
+	const Vehicle *v = Vehicle::GetIfValid(vid);
+	if (v == nullptr) {
+		throw std::runtime_error("Invalid vehicle ID");
+	}
+
+	/* Cancel depot order by sending to depot with no flags, then immediately canceling */
+	DepotCommandFlags depot_flags;
+
+	VehicleListIdentifier vli;
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	/* Sending a vehicle to depot while already heading there cancels the depot order */
+	CommandCost cost = Command<CMD_SEND_VEHICLE_TO_DEPOT>::Do(flags, vid, depot_flags, vli);
+
+	nlohmann::json result;
+	result["vehicle_id"] = vid.base();
+	result["success"] = cost.Succeeded();
+
+	return result;
+}
+
+static nlohmann::json HandleOrderAppend(const nlohmann::json &params)
+{
+	if (!params.contains("vehicle_id")) {
+		throw std::runtime_error("Missing required parameter: vehicle_id");
+	}
+	if (!params.contains("destination")) {
+		throw std::runtime_error("Missing required parameter: destination (station_id)");
+	}
+
+	VehicleID vid = static_cast<VehicleID>(params["vehicle_id"].get<int>());
+	const Vehicle *v = Vehicle::GetIfValid(vid);
+	if (v == nullptr || !v->IsPrimaryVehicle()) {
+		throw std::runtime_error("Invalid vehicle ID");
+	}
+
+	/* Get order parameters */
+	StationID dest_station = static_cast<StationID>(params["destination"].get<int>());
+	const Station *st = Station::GetIfValid(dest_station);
+	if (st == nullptr) {
+		throw std::runtime_error("Invalid destination station ID");
+	}
+
+	/* Build the order */
+	Order order;
+	order.MakeGoToStation(dest_station);
+
+	/* Set load/unload flags if specified */
+	std::string load_type = params.value("load", "default");
+	std::string unload_type = params.value("unload", "default");
+
+	if (load_type == "full") {
+		order.SetLoadType(OrderLoadType::FullLoad);
+	} else if (load_type == "full_any") {
+		order.SetLoadType(OrderLoadType::FullLoadAny);
+	} else if (load_type == "none") {
+		order.SetLoadType(OrderLoadType::NoLoad);
+	}
+
+	if (unload_type == "unload") {
+		order.SetUnloadType(OrderUnloadType::Unload);
+	} else if (unload_type == "transfer") {
+		order.SetUnloadType(OrderUnloadType::Transfer);
+	} else if (unload_type == "none") {
+		order.SetUnloadType(OrderUnloadType::NoUnload);
+	}
+
+	/* Non-stop flag */
+	if (params.value("non_stop", false)) {
+		OrderNonStopFlags nsf;
+		nsf.Set(OrderNonStopFlag::NoIntermediate);
+		order.SetNonStopType(nsf);
+	}
+
+	/* Append order at end */
+	VehicleOrderID insert_pos = (v->orders != nullptr) ? v->orders->GetNumOrders() : 0;
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+	CommandCost cost = Command<CMD_INSERT_ORDER>::Do(flags, vid, insert_pos, order);
+
+	nlohmann::json result;
+	result["vehicle_id"] = vid.base();
+	result["success"] = cost.Succeeded();
+	result["order_index"] = insert_pos;
+	result["destination"] = dest_station.base();
+	result["destination_name"] = StrMakeValid(st->GetCachedName());
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to append order";
+	}
+
+	return result;
+}
+
+static nlohmann::json HandleOrderRemove(const nlohmann::json &params)
+{
+	if (!params.contains("vehicle_id")) {
+		throw std::runtime_error("Missing required parameter: vehicle_id");
+	}
+	if (!params.contains("order_index")) {
+		throw std::runtime_error("Missing required parameter: order_index");
+	}
+
+	VehicleID vid = static_cast<VehicleID>(params["vehicle_id"].get<int>());
+	VehicleOrderID order_idx = static_cast<VehicleOrderID>(params["order_index"].get<int>());
+
+	const Vehicle *v = Vehicle::GetIfValid(vid);
+	if (v == nullptr || !v->IsPrimaryVehicle()) {
+		throw std::runtime_error("Invalid vehicle ID");
+	}
+
+	if (v->orders == nullptr || order_idx >= v->orders->GetNumOrders()) {
+		throw std::runtime_error("Invalid order index");
+	}
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+	CommandCost cost = Command<CMD_DELETE_ORDER>::Do(flags, vid, order_idx);
+
+	nlohmann::json result;
+	result["vehicle_id"] = vid.base();
+	result["success"] = cost.Succeeded();
+	result["removed_index"] = order_idx;
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to remove order";
+	}
+
+	return result;
+}
+
 void RpcRegisterHandlers(RpcServer &server)
 {
 	server.RegisterHandler("ping", HandlePing);
@@ -917,4 +1138,11 @@ void RpcRegisterHandlers(RpcServer &server)
 	server.RegisterHandler("town.get", HandleTownGet);
 	server.RegisterHandler("order.list", HandleOrderList);
 	server.RegisterHandler("map.scan", HandleMapScan);
+
+	/* Action handlers */
+	server.RegisterHandler("vehicle.startstop", HandleVehicleStartStop);
+	server.RegisterHandler("vehicle.depot", HandleVehicleSendToDepot);
+	server.RegisterHandler("vehicle.turnaround", HandleVehicleTurnAround);
+	server.RegisterHandler("order.append", HandleOrderAppend);
+	server.RegisterHandler("order.remove", HandleOrderRemove);
 }

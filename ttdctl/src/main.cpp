@@ -49,6 +49,12 @@ static void PrintUsage()
 	std::cout << "  tile                Tile information\n";
 	std::cout << "  town                Town information\n";
 	std::cout << "  order               Vehicle order information\n";
+	std::cout << "\nActions:\n";
+	std::cout << "  vehicle startstop   Toggle vehicle start/stop\n";
+	std::cout << "  vehicle depot       Send vehicle to depot\n";
+	std::cout << "  vehicle turnaround  Cancel depot order (turn around)\n";
+	std::cout << "  order append        Add order to vehicle\n";
+	std::cout << "  order remove        Remove order from vehicle\n";
 	std::cout << "\nExamples:\n";
 	std::cout << "  ttdctl ping\n";
 	std::cout << "  ttdctl game status\n";
@@ -66,6 +72,12 @@ static void PrintUsage()
 	std::cout << "  ttdctl town list\n";
 	std::cout << "  ttdctl town get 0\n";
 	std::cout << "  ttdctl order list 42\n";
+	std::cout << "\n  # Actions:\n";
+	std::cout << "  ttdctl vehicle startstop 42\n";
+	std::cout << "  ttdctl vehicle depot 42\n";
+	std::cout << "  ttdctl vehicle turnaround 42\n";
+	std::cout << "  ttdctl order append 42 --station 5 --load full --unload transfer\n";
+	std::cout << "  ttdctl order remove 42 --index 1\n";
 }
 
 static CliOptions ParseArgs(int argc, char *argv[])
@@ -796,6 +808,217 @@ static int HandleMapScan(RpcClient &client, const CliOptions &opts)
 	}
 }
 
+static int HandleVehicleStartStop(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.empty()) {
+			std::cerr << "Error: vehicle ID required\n";
+			std::cerr << "Usage: ttdctl vehicle startstop <id>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["vehicle_id"] = std::stoi(opts.args[0]);
+
+		auto result = client.Call("vehicle.startstop", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		int vid = result["vehicle_id"].get<int>();
+
+		if (success) {
+			bool stopped = result["stopped"].get<bool>();
+			std::cout << "Vehicle #" << vid << " is now " << (stopped ? "stopped" : "running") << "\n";
+		} else {
+			std::cerr << "Failed to toggle vehicle #" << vid << ": " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleVehicleDepot(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.empty()) {
+			std::cerr << "Error: vehicle ID required\n";
+			std::cerr << "Usage: ttdctl vehicle depot <id>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["vehicle_id"] = std::stoi(opts.args[0]);
+
+		auto result = client.Call("vehicle.depot", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		int vid = result["vehicle_id"].get<int>();
+
+		if (success) {
+			std::cout << "Vehicle #" << vid << " sent to depot\n";
+		} else {
+			std::cerr << "Failed to send vehicle #" << vid << " to depot: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleVehicleTurnaround(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.empty()) {
+			std::cerr << "Error: vehicle ID required\n";
+			std::cerr << "Usage: ttdctl vehicle turnaround <id>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["vehicle_id"] = std::stoi(opts.args[0]);
+
+		auto result = client.Call("vehicle.turnaround", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		int vid = result["vehicle_id"].get<int>();
+
+		if (success) {
+			std::cout << "Vehicle #" << vid << " depot order cancelled\n";
+		} else {
+			std::cerr << "Failed to cancel depot order for vehicle #" << vid << ": " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleOrderAppend(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.empty()) {
+			std::cerr << "Error: vehicle ID required\n";
+			std::cerr << "Usage: ttdctl order append <vehicle_id> --station <id> [--load TYPE] [--unload TYPE] [--non-stop]\n";
+			std::cerr << "  Load types: default, full, full_any, none\n";
+			std::cerr << "  Unload types: default, unload, transfer, none\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["vehicle_id"] = std::stoi(opts.args[0]);
+
+		/* Parse --station, --load, --unload, --non-stop from args */
+		for (size_t i = 1; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--station" && i + 1 < opts.args.size()) {
+				params["station_id"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--load" && i + 1 < opts.args.size()) {
+				params["load_type"] = opts.args[++i];
+			} else if (opts.args[i] == "--unload" && i + 1 < opts.args.size()) {
+				params["unload_type"] = opts.args[++i];
+			} else if (opts.args[i] == "--non-stop") {
+				params["non_stop"] = true;
+			}
+		}
+
+		if (!params.contains("station_id")) {
+			std::cerr << "Error: --station is required\n";
+			std::cerr << "Usage: ttdctl order append <vehicle_id> --station <id> [--load TYPE] [--unload TYPE] [--non-stop]\n";
+			return 1;
+		}
+
+		auto result = client.Call("order.append", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		int vid = result["vehicle_id"].get<int>();
+
+		if (success) {
+			int order_index = result["order_index"].get<int>();
+			std::cout << "Added order #" << order_index << " to vehicle #" << vid << "\n";
+		} else {
+			std::cerr << "Failed to add order to vehicle #" << vid << ": " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleOrderRemove(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.empty()) {
+			std::cerr << "Error: vehicle ID required\n";
+			std::cerr << "Usage: ttdctl order remove <vehicle_id> --index <order_index>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["vehicle_id"] = std::stoi(opts.args[0]);
+
+		/* Parse --index from args */
+		for (size_t i = 1; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--index" && i + 1 < opts.args.size()) {
+				params["order_index"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		if (!params.contains("order_index")) {
+			std::cerr << "Error: --index is required\n";
+			std::cerr << "Usage: ttdctl order remove <vehicle_id> --index <order_index>\n";
+			return 1;
+		}
+
+		auto result = client.Call("order.remove", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		int vid = result["vehicle_id"].get<int>();
+
+		if (success) {
+			std::cout << "Removed order from vehicle #" << vid << "\n";
+		} else {
+			std::cerr << "Failed to remove order from vehicle #" << vid << ": " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	auto opts = ParseArgs(argc, argv);
@@ -822,6 +1045,12 @@ int main(int argc, char *argv[])
 			return HandleVehicleList(client, opts);
 		} else if (opts.action == "get") {
 			return HandleVehicleGet(client, opts);
+		} else if (opts.action == "startstop") {
+			return HandleVehicleStartStop(client, opts);
+		} else if (opts.action == "depot") {
+			return HandleVehicleDepot(client, opts);
+		} else if (opts.action == "turnaround") {
+			return HandleVehicleTurnaround(client, opts);
 		}
 	} else if (opts.resource == "station") {
 		if (opts.action == "list" || opts.action.empty()) {
@@ -856,6 +1085,10 @@ int main(int argc, char *argv[])
 	} else if (opts.resource == "order") {
 		if (opts.action == "list" || opts.action.empty()) {
 			return HandleOrderList(client, opts);
+		} else if (opts.action == "append") {
+			return HandleOrderAppend(client, opts);
+		} else if (opts.action == "remove") {
+			return HandleOrderRemove(client, opts);
 		}
 	}
 
