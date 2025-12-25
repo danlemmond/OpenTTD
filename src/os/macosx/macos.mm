@@ -262,6 +262,15 @@ uint64_t MacOSGetPhysicalMemory()
 }
 
 /**
+ * Check if the current thread is the main thread.
+ * @return true if on the main thread, false otherwise.
+ */
+bool MacOSIsMainThread()
+{
+	return [NSThread isMainThread];
+}
+
+/**
  * Run a function wrapped in @try/@catch to catch Objective-C exceptions.
  * This logs detailed exception information before re-throwing.
  * @param func The function to run.

@@ -30,6 +30,14 @@
 #include "../misc_cmd.h"
 #include "../town.h"
 #include "../town_cmd.h"
+#include "../station_cmd.h"
+#include "../rail_cmd.h"
+#include "../road_cmd.h"
+#include "../landscape_cmd.h"
+#include "../station_map.h"
+#include "../rail_map.h"
+#include "../road_map.h"
+#include "../tile_map.h"
 
 #include "../safeguards.h"
 
@@ -76,7 +84,8 @@ static nlohmann::json HandleVehicleStartStop(const nlohmann::json &params)
 		/* Re-fetch vehicle state after command */
 		v = Vehicle::GetIfValid(vid);
 		if (v != nullptr) {
-			result["stopped"] = v->IsStoppedInDepot() || v->vehstatus.Test(VehState::Stopped);
+			/* Use First() since IsStoppedInDepot() requires primary vehicle */
+			result["stopped"] = v->First()->IsStoppedInDepot() || v->vehstatus.Test(VehState::Stopped);
 		}
 	}
 
@@ -390,7 +399,8 @@ static nlohmann::json HandleVehicleBuild(const nlohmann::json &params)
 		/* Fetch the newly created vehicle for more details */
 		const Vehicle *v = Vehicle::GetIfValid(new_veh_id);
 		if (v != nullptr) {
-			result["stopped"] = v->IsStoppedInDepot() || v->vehstatus.Test(VehState::Stopped);
+			/* Use First() since IsStoppedInDepot() requires primary vehicle (wagons aren't primary) */
+			result["stopped"] = v->First()->IsStoppedInDepot() || v->vehstatus.Test(VehState::Stopped);
 		}
 	} else {
 		result["error"] = "Failed to build vehicle - check depot, engine, and funds";
@@ -425,7 +435,8 @@ static nlohmann::json HandleVehicleSell(const nlohmann::json &params)
 	}
 
 	/* For the user's benefit, explain why it might fail */
-	if (!v->IsStoppedInDepot()) {
+	/* Use First() since IsStoppedInDepot() requires primary vehicle */
+	if (!v->First()->IsStoppedInDepot()) {
 		throw std::runtime_error("Vehicle must be stopped in a depot to be sold");
 	}
 
@@ -650,7 +661,8 @@ static nlohmann::json HandleVehicleRefit(const nlohmann::json &params)
 	}
 
 	/* Vehicle should be in depot for refit */
-	if (!v->IsStoppedInDepot()) {
+	/* Use First() since IsStoppedInDepot() requires primary vehicle */
+	if (!v->First()->IsStoppedInDepot()) {
 		throw std::runtime_error("Vehicle must be stopped in a depot to be refitted");
 	}
 
@@ -1033,6 +1045,362 @@ static nlohmann::json HandleTownPerformAction(const nlohmann::json &params)
 	return result;
 }
 
+/**
+ * Handler for station.remove - Remove a station tile or road stop.
+ *
+ * Parameters:
+ *   tile or x/y: The tile to remove (required)
+ *   company: Company ID (default: 0)
+ *   keep_rail: For rail stations, whether to keep the rail (default: false)
+ *   remove_road: For road stops, whether to remove the road too (default: false)
+ *
+ * Returns:
+ *   success: Whether the removal succeeded
+ */
+static nlohmann::json HandleStationRemove(const nlohmann::json &params)
+{
+	/* Get tile */
+	TileIndex tile;
+	if (params.contains("tile")) {
+		tile = static_cast<TileIndex>(params["tile"].get<uint32_t>());
+	} else if (params.contains("x") && params.contains("y")) {
+		uint x = params["x"].get<uint>();
+		uint y = params["y"].get<uint>();
+		if (x >= Map::SizeX() || y >= Map::SizeY()) {
+			throw std::runtime_error("Tile coordinates out of bounds");
+		}
+		tile = TileXY(x, y);
+	} else {
+		throw std::runtime_error("Missing required parameter: tile or x/y");
+	}
+
+	/* Check tile type */
+	if (!IsTileType(tile, MP_STATION)) {
+		throw std::runtime_error("Specified tile is not a station");
+	}
+
+	/* Get company */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	if (!Company::IsValidID(company)) {
+		throw std::runtime_error("Invalid company ID");
+	}
+
+	/* Check ownership */
+	if (GetTileOwner(tile) != company) {
+		throw std::runtime_error("Station is not owned by specified company");
+	}
+
+	/* Switch to company context */
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	CommandCost cost;
+	bool is_rail_station = IsRailStationTile(tile);
+	bool is_road_stop = IsStationRoadStopTile(tile);
+
+	if (is_rail_station) {
+		/* Remove rail station tile - use same tile for start/end to remove single tile */
+		bool keep_rail = params.value("keep_rail", false);
+		cost = Command<CMD_REMOVE_FROM_RAIL_STATION>::Do(flags, tile, tile, keep_rail);
+	} else if (is_road_stop) {
+		/* Remove road stop */
+		RoadStopType stop_type = GetRoadStopType(tile);
+		bool remove_road = params.value("remove_road", false);
+		cost = Command<CMD_REMOVE_ROAD_STOP>::Do(flags, tile, 1, 1, stop_type, remove_road);
+	} else {
+		cur_company.Restore();
+		throw std::runtime_error("Unsupported station type for removal - use bulldoze for airports/docks");
+	}
+
+	cur_company.Restore();
+
+	nlohmann::json result;
+	result["tile"] = tile != INVALID_TILE ? tile.base() : 0;
+	result["success"] = cost.Succeeded();
+	result["station_type"] = is_rail_station ? "rail" : (is_road_stop ? "road_stop" : "other");
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(tile, "station.remove");
+	} else {
+		result["error"] = "Failed to remove station - check ownership and that no vehicles are using it";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for depot.remove - Remove a depot.
+ *
+ * Parameters:
+ *   tile or x/y: The depot tile (required)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the removal succeeded
+ */
+static nlohmann::json HandleDepotRemove(const nlohmann::json &params)
+{
+	/* Get tile */
+	TileIndex tile;
+	if (params.contains("tile")) {
+		tile = static_cast<TileIndex>(params["tile"].get<uint32_t>());
+	} else if (params.contains("x") && params.contains("y")) {
+		uint x = params["x"].get<uint>();
+		uint y = params["y"].get<uint>();
+		if (x >= Map::SizeX() || y >= Map::SizeY()) {
+			throw std::runtime_error("Tile coordinates out of bounds");
+		}
+		tile = TileXY(x, y);
+	} else {
+		throw std::runtime_error("Missing required parameter: tile or x/y");
+	}
+
+	/* Check if it's a depot */
+	if (!IsDepotTile(tile)) {
+		throw std::runtime_error("Specified tile is not a depot");
+	}
+
+	/* Get company */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	if (!Company::IsValidID(company)) {
+		throw std::runtime_error("Invalid company ID");
+	}
+
+	/* Check ownership */
+	if (GetTileOwner(tile) != company) {
+		throw std::runtime_error("Depot is not owned by specified company");
+	}
+
+	/* Switch to company context */
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	/* Use landscape clear to remove the depot */
+	CommandCost cost = Command<CMD_LANDSCAPE_CLEAR>::Do(flags, tile);
+
+	cur_company.Restore();
+
+	nlohmann::json result;
+	result["tile"] = tile != INVALID_TILE ? tile.base() : 0;
+	result["success"] = cost.Succeeded();
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(tile, "depot.remove");
+	} else {
+		result["error"] = "Failed to remove depot - ensure no vehicles are inside";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for rail.remove - Remove a rail track segment.
+ *
+ * Parameters:
+ *   tile or x/y: The tile (required)
+ *   track: Track direction to remove (required)
+ *          Values: "x", "y", "upper", "lower", "left", "right"
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the removal succeeded
+ */
+static nlohmann::json HandleRailRemove(const nlohmann::json &params)
+{
+	/* Get tile */
+	TileIndex tile;
+	if (params.contains("tile")) {
+		tile = static_cast<TileIndex>(params["tile"].get<uint32_t>());
+	} else if (params.contains("x") && params.contains("y")) {
+		uint x = params["x"].get<uint>();
+		uint y = params["y"].get<uint>();
+		if (x >= Map::SizeX() || y >= Map::SizeY()) {
+			throw std::runtime_error("Tile coordinates out of bounds");
+		}
+		tile = TileXY(x, y);
+	} else {
+		throw std::runtime_error("Missing required parameter: tile or x/y");
+	}
+
+	/* Get track */
+	if (!params.contains("track")) {
+		throw std::runtime_error("Missing required parameter: track");
+	}
+
+	std::string track_str = params["track"].get<std::string>();
+	Track track;
+
+	if (track_str == "x") {
+		track = TRACK_X;
+	} else if (track_str == "y") {
+		track = TRACK_Y;
+	} else if (track_str == "upper") {
+		track = TRACK_UPPER;
+	} else if (track_str == "lower") {
+		track = TRACK_LOWER;
+	} else if (track_str == "left") {
+		track = TRACK_LEFT;
+	} else if (track_str == "right") {
+		track = TRACK_RIGHT;
+	} else {
+		throw std::runtime_error("Invalid track value - must be: x, y, upper, lower, left, right");
+	}
+
+	/* Check if tile has rail */
+	if (!IsTileType(tile, MP_RAILWAY)) {
+		throw std::runtime_error("Specified tile does not have railway");
+	}
+
+	/* Get company */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	if (!Company::IsValidID(company)) {
+		throw std::runtime_error("Invalid company ID");
+	}
+
+	/* Check ownership */
+	if (GetTileOwner(tile) != company) {
+		throw std::runtime_error("Railway is not owned by specified company");
+	}
+
+	/* Switch to company context */
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	CommandCost cost = Command<CMD_REMOVE_SINGLE_RAIL>::Do(flags, tile, track);
+
+	cur_company.Restore();
+
+	nlohmann::json result;
+	result["tile"] = tile != INVALID_TILE ? tile.base() : 0;
+	result["track"] = track_str;
+	result["success"] = cost.Succeeded();
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(tile, "rail.remove");
+	} else {
+		result["error"] = "Failed to remove rail - check that specified track exists on tile";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for road.remove - Remove a road segment.
+ *
+ * Parameters:
+ *   tile or x/y: The start tile (required)
+ *   end_tile or end_x/end_y: The end tile (optional, defaults to start tile)
+ *   road_type: Road type ID (default: 0)
+ *   axis: "x" or "y" (required if spanning multiple tiles)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the removal succeeded
+ *   refund: Money refunded for the removal
+ */
+static nlohmann::json HandleRoadRemove(const nlohmann::json &params)
+{
+	/* Get start tile */
+	TileIndex start_tile;
+	if (params.contains("tile")) {
+		start_tile = static_cast<TileIndex>(params["tile"].get<uint32_t>());
+	} else if (params.contains("x") && params.contains("y")) {
+		uint x = params["x"].get<uint>();
+		uint y = params["y"].get<uint>();
+		if (x >= Map::SizeX() || y >= Map::SizeY()) {
+			throw std::runtime_error("Tile coordinates out of bounds");
+		}
+		start_tile = TileXY(x, y);
+	} else {
+		throw std::runtime_error("Missing required parameter: tile or x/y");
+	}
+
+	/* Get end tile (default to same as start) */
+	TileIndex end_tile = start_tile;
+	if (params.contains("end_tile")) {
+		end_tile = static_cast<TileIndex>(params["end_tile"].get<uint32_t>());
+	} else if (params.contains("end_x") && params.contains("end_y")) {
+		uint x = params["end_x"].get<uint>();
+		uint y = params["end_y"].get<uint>();
+		if (x >= Map::SizeX() || y >= Map::SizeY()) {
+			throw std::runtime_error("End tile coordinates out of bounds");
+		}
+		end_tile = TileXY(x, y);
+	}
+
+	/* Get road type */
+	RoadType rt = static_cast<RoadType>(params.value("road_type", 0));
+
+	/* Get axis - determine from tiles if not specified */
+	Axis axis;
+	if (params.contains("axis")) {
+		std::string axis_str = params["axis"].get<std::string>();
+		if (axis_str == "x") {
+			axis = AXIS_X;
+		} else if (axis_str == "y") {
+			axis = AXIS_Y;
+		} else {
+			throw std::runtime_error("Invalid axis value - must be 'x' or 'y'");
+		}
+	} else {
+		/* Infer axis from tile positions */
+		if (TileX(start_tile) == TileX(end_tile)) {
+			axis = AXIS_Y;
+		} else if (TileY(start_tile) == TileY(end_tile)) {
+			axis = AXIS_X;
+		} else {
+			throw std::runtime_error("Tiles must be aligned on X or Y axis, or specify axis parameter");
+		}
+	}
+
+	/* Check if start tile has road */
+	if (!IsTileType(start_tile, MP_ROAD)) {
+		throw std::runtime_error("Start tile does not have road");
+	}
+
+	/* Get company */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	if (!Company::IsValidID(company)) {
+		throw std::runtime_error("Invalid company ID");
+	}
+
+	/* Check ownership */
+	Owner tile_owner = GetTileOwner(start_tile);
+	if (tile_owner != company && tile_owner != OWNER_TOWN && tile_owner != OWNER_NONE) {
+		throw std::runtime_error("Road is not owned by specified company or town");
+	}
+
+	/* Switch to company context */
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	auto [cost, refund] = Command<CMD_REMOVE_LONG_ROAD>::Do(flags, end_tile, start_tile, rt, axis, false, false);
+
+	cur_company.Restore();
+
+	nlohmann::json result;
+	result["start_tile"] = start_tile != INVALID_TILE ? start_tile.base() : 0;
+	result["end_tile"] = end_tile != INVALID_TILE ? end_tile.base() : 0;
+	result["success"] = cost.Succeeded();
+
+	if (cost.Succeeded()) {
+		result["refund"] = refund.base();
+		RpcRecordActivity(start_tile, "road.remove");
+	} else {
+		result["error"] = "Failed to remove road - may be protected by town or in use";
+	}
+
+	return result;
+}
+
 void RpcRegisterActionHandlers(RpcServer &server)
 {
 	server.RegisterHandler("vehicle.startstop", HandleVehicleStartStop);
@@ -1049,4 +1417,8 @@ void RpcRegisterActionHandlers(RpcServer &server)
 	server.RegisterHandler("order.share", HandleOrderShare);
 	server.RegisterHandler("company.setLoan", HandleCompanySetLoan);
 	server.RegisterHandler("town.performAction", HandleTownPerformAction);
+	server.RegisterHandler("station.remove", HandleStationRemove);
+	server.RegisterHandler("depot.remove", HandleDepotRemove);
+	server.RegisterHandler("rail.remove", HandleRailRemove);
+	server.RegisterHandler("road.remove", HandleRoadRemove);
 }

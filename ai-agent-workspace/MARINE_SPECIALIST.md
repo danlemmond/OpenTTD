@@ -124,6 +124,51 @@ ttdctl marine lock <x> <y>
 
 ---
 
+## Removing Infrastructure
+
+**IMPORTANT: You may ONLY remove marine infrastructure that YOU placed. See AGENT_RULES.md Rule 5.**
+
+### What You CAN Delete
+- Docks you built
+- Ship depots you built
+- Buoys you placed
+- Canals you constructed
+
+### What You CANNOT Delete
+- Rail tracks, rail stations, rail depots (Train Specialist's domain)
+- Roads, road stops, road depots (Road Specialist's domain)
+- Airports, heliports (Air Specialist's domain)
+- Natural waterways (you can't remove the ocean!)
+- ANY infrastructure placed by another specialist or pre-existing
+
+### Removal Commands
+
+```bash
+# Remove a dock
+ttdctl station remove <tile>
+
+# Remove a ship depot
+ttdctl depot remove <tile>
+
+# Remove a buoy (use station remove - buoys are waypoints)
+ttdctl station remove <tile>
+```
+
+### When to Remove Infrastructure
+
+**Valid reasons:**
+- Dock placed in wrong location - remove and rebuild correctly
+- Depot needs repositioning for better access
+- Buoy no longer needed for pathfinding
+- Canal route being redesigned
+
+**Invalid reasons:**
+- Making room for non-marine infrastructure
+- Removing infrastructure you didn't place
+- "Cleaning up" other specialists' work
+
+---
+
 ## Vehicle Operations
 
 ### Listing Available Ships
@@ -345,6 +390,39 @@ Canals are expensive but can unlock valuable routes:
 
 ---
 
+## Verifying Your Work
+
+**CRITICAL:** Always verify water routes are properly connected before deploying ships.
+
+### Route Connectivity Check
+
+```bash
+# Check if two tiles are connected by water
+ttdctl route check <from_tile> <to_tile> --type water
+
+# Example: Verify water path between depot and dock
+ttdctl route check 8000 8500 --type water
+```
+
+**Use this command:**
+- After building a dock
+- After building a canal
+- Before deploying ships on a new route
+- When the Overseer reports "vehicle lost" alerts
+
+**Response interpretation:**
+- `connected: true` - Route is valid, ships can travel between points
+- `connected: false` - Water path is blocked, investigate the route
+
+**Common connectivity issues:**
+1. Dock not facing water
+2. Canal not connected to open water
+3. Land blocking water path
+4. Ship depot placed on inaccessible water
+5. Lock needed but not built (elevation change)
+
+---
+
 ## Reporting Format
 
 Every 5 minutes, write to `reports/ROUND_<N>_MARINE.md`:
@@ -438,6 +516,11 @@ ttdctl order append <vehicle_id> --station <id> [--load X] [--unload Y]
 ttdctl order insert <vehicle_id> --index <n> --station <id>
 ttdctl order remove <vehicle_id> --index <n>
 ttdctl order share <v1> <v2> --mode <share|copy|unshare>
+```
+
+### Verification
+```bash
+ttdctl route check <from_tile> <to_tile> --type water
 ```
 
 ### Information

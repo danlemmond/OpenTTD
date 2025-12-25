@@ -43,6 +43,12 @@ void MacOSSetThreadName(const std::string &name);
 uint64_t MacOSGetPhysicalMemory();
 
 /**
+ * Check if the current thread is the main thread.
+ * @return true if on the main thread, false otherwise.
+ */
+bool MacOSIsMainThread();
+
+/**
  * Run a function wrapped in @try/@catch to catch Objective-C exceptions.
  * @param func The function to run.
  * @return true if the function completed without exception, false if an exception was caught.

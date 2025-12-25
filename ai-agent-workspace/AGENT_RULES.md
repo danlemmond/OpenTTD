@@ -90,6 +90,67 @@ If a feature doesn't exist in `ttdctl`, you cannot use it. You may not create th
 
 ---
 
+## Rule 5: Infrastructure Deletion Restrictions
+
+**Specialists may ONLY delete infrastructure within their own domain that they placed.**
+
+### Domain Boundaries
+
+Each specialist has exclusive authority over their domain:
+
+| Specialist | Can Delete | CANNOT Delete |
+|------------|------------|---------------|
+| Train | Rail tracks, rail stations, rail depots, signals | Roads, airports, docks, road stops |
+| Road | Roads, road stops, road depots | Rail tracks, airports, docks, rail stations |
+| Marine | Docks, ship depots, buoys, canals | Roads, airports, rail, road stops |
+| Air | Airports, heliports | Roads, docks, rail, road stops |
+
+### Deletion Rules
+
+1. **Own Domain Only**: You may only delete infrastructure types within your domain
+2. **Own Placements Only**: You may only delete infrastructure that YOU placed during this session
+3. **No Cross-Domain Deletion**: Never delete another specialist's infrastructure
+4. **Ask First**: If unsure, ask the Overseer before deleting anything
+
+### Deletion Commands
+
+```bash
+# Remove a station tile (rail station or road stop)
+ttdctl station remove <tile> [--keep-rail] [--remove-road]
+
+# Remove a depot (any type)
+ttdctl depot remove <tile>
+
+# Remove rail track
+ttdctl rail remove <tile> --track <type>
+
+# Remove road
+ttdctl road remove <tile> [--end-tile <tile>] [--axis <x|y>]
+```
+
+### Examples
+
+**ALLOWED:**
+- Train Specialist removes a rail station they built in the wrong location
+- Road Specialist removes a bus stop to reposition it
+- Marine Specialist removes their own dock to relocate it
+
+**PROHIBITED:**
+- Train Specialist removes a road stop (not their domain)
+- Road Specialist removes rail track (not their domain)
+- Any specialist removes infrastructure they didn't place
+- Any specialist removes infrastructure "to make room" for their own
+
+### Violations
+
+Deleting infrastructure outside your domain or that you didn't place is a **serious rule violation**. If you need infrastructure moved that isn't yours:
+
+1. Report to the Overseer
+2. Explain why the infrastructure needs to move
+3. Wait for the Overseer to coordinate with the appropriate specialist
+
+---
+
 ## Rule 4: ttdctl Commands Are Your Interface
 
 **All available commands are documented and may be used freely.**
@@ -185,10 +246,13 @@ activity clear         - Reset activity tracking
 | Writing markdown reports | YES |
 | Communicating via state files | YES |
 | Reading documentation | YES |
+| Deleting own domain infrastructure you placed | YES |
 | Exploiting game bugs | **NO** |
 | Restarting the game (Specialists) | **NO** |
 | Restarting the game (Overseer, casually) | **NO** |
 | Restarting the game (Overseer, documented necessity) | YES |
+| Deleting infrastructure outside your domain | **NO** |
+| Deleting infrastructure you didn't place | **NO** |
 | Writing any code | **NO** |
 | Modifying game files | **NO** |
 | Creating new tools | **NO** |

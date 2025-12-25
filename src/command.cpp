@@ -192,6 +192,13 @@ void CommandHelperBase::InternalDoAfter(CommandCost &res, DoCommandFlags flags, 
 		if (res.Succeeded() && top_level && !flags.Test(DoCommandFlag::Bankrupt)) {
 			SubtractMoneyFromCompany(res);
 		}
+
+		/* Flush the signal buffer after top-level command execution.
+		 * This is needed for Command::Do() calls (e.g., from RPC handlers)
+		 * that don't go through InternalExecuteProcessResult(). */
+		if (top_level) {
+			UpdateSignalsInBuffer();
+		}
 	}
 }
 

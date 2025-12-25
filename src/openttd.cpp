@@ -141,7 +141,19 @@ void UserErrorI(const std::string &str)
 void FatalErrorI(const std::string &str)
 {
 	if (VideoDriver::GetInstance() == nullptr || VideoDriver::GetInstance()->HasGUI()) {
+#ifdef __APPLE__
+		/* On macOS, showing a dialog from a non-main thread will crash.
+		 * Only attempt to show the error box if we're on the main thread. */
+		extern bool MacOSIsMainThread();
+		if (MacOSIsMainThread()) {
+			ShowOSErrorBox(str, true);
+		} else {
+			/* Log to stderr instead since we can't show a dialog. */
+			fmt::print(stderr, "FATAL ERROR (from background thread): {}\n", str);
+		}
+#else
 		ShowOSErrorBox(str, true);
+#endif
 	}
 
 	/* Set the error message for the crash log and then invoke it. */

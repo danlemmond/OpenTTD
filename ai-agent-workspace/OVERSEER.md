@@ -106,6 +106,37 @@ ttdctl station list
 ttdctl game status
 ```
 
+### 6. Alert Monitoring
+
+**CRITICAL:** Check for problems using the company alerts command:
+
+```bash
+# Get recent alerts/warnings for your company
+ttdctl company alerts
+```
+
+This returns recent game notifications including:
+
+| Alert Type | Meaning | Action Required |
+|------------|---------|-----------------|
+| `vehicle_lost` | Vehicle cannot reach destination | Check route connectivity |
+| `train_stuck` | Train stuck in traffic | Add signals or passing loops |
+| `train_reversed` | Train reversed in station | Check track layout |
+| `advice_train_income` | Train running at a loss | Evaluate route profitability |
+| `advice_vehicle_start` | Vehicle waiting for orders | Complete order setup |
+| `advice_station_coverage` | Station not accepting cargo | Check station placement |
+| `advice_aircraft_age` | Aircraft getting old | Plan replacement |
+| `acceptance_changed` | Station cargo acceptance changed | Verify station still useful |
+
+**Alert Response Protocol:**
+
+1. **Vehicle Lost:** Immediately notify the responsible specialist to check route connectivity with `ttdctl route check <from_tile> <to_tile>`
+2. **Train Stuck:** Assign Train Specialist to improve signaling
+3. **Low Income Warnings:** Evaluate if route should be abandoned or optimized
+4. **Aircraft Age:** Budget for fleet renewal
+
+Include alert summary in round state updates so specialists can address issues.
+
 ---
 
 ## Round Structure (5-Minute Cycles)
@@ -335,6 +366,7 @@ When specialists have conflicting needs:
 ### Company & Economy
 ```bash
 ttdctl company list              # Company finances
+ttdctl company alerts            # Get recent warnings/problems
 ttdctl company setloan <amount>  # Adjust loan
 ttdctl cargo list                # All cargo types
 ttdctl cargo income <type> <dist> <days> [amt]  # Calculate income

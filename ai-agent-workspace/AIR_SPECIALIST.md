@@ -121,6 +121,52 @@ Aircraft automatically use the airport's hangar for maintenance.
 
 ---
 
+## Removing Infrastructure
+
+**IMPORTANT: You may ONLY remove aviation infrastructure that YOU placed. See AGENT_RULES.md Rule 5.**
+
+### What You CAN Delete
+- Airports you built
+- Heliports you built
+- Helidepots you built
+- Helistations you built
+
+### What You CANNOT Delete
+- Rail tracks, rail stations, rail depots (Train Specialist's domain)
+- Roads, road stops, road depots (Road Specialist's domain)
+- Docks, ship depots, buoys (Marine Specialist's domain)
+- ANY infrastructure placed by another specialist or pre-existing
+
+### Removal Commands
+
+```bash
+# Remove an airport or heliport
+# Note: Airports are removed using the landscape clear command
+# The airport must have no aircraft inside
+
+ttdctl depot remove <tile>
+# This works for airports since they function as depots
+```
+
+**WARNING:** Removing an airport will strand any aircraft currently using it. Always:
+1. Send all aircraft to another airport first
+2. Wait for them to land and leave
+3. Then remove the airport
+
+### When to Remove Infrastructure
+
+**Valid reasons:**
+- Airport placed in wrong location - remove and rebuild correctly
+- Upgrading airport size (build new one first, transfer aircraft, then remove old)
+- Heliport no longer needed
+
+**Invalid reasons:**
+- Making room for non-aviation infrastructure
+- Removing infrastructure you didn't place
+- "Cleaning up" other specialists' work
+
+---
+
 ## Vehicle Operations
 
 ### Listing Available Aircraft
@@ -331,6 +377,40 @@ ttdctl engine get <engine_id>
 3. **Ignoring reliability:** Older aircraft break down more
 4. **Short routes:** Aircraft overhead makes short routes unprofitable
 5. **Missing mail:** Mixed passenger/mail is often more profitable
+
+---
+
+## Verifying Your Work
+
+Aircraft fly point-to-point and don't require route connectivity checks like ground vehicles. However, you should monitor for problems:
+
+### Checking for Issues
+
+Aircraft can still have problems. Watch for alerts from the Overseer about:
+
+| Alert Type | Meaning | Action |
+|------------|---------|--------|
+| `vehicle_lost` | Aircraft cannot find destination | Check airport exists and is owned by you |
+| `advice_aircraft_age` | Aircraft getting old | Plan for replacement |
+| `advice_vehicle_start` | Aircraft waiting in hangar | Complete orders and start |
+
+**Common aircraft problems:**
+1. Aircraft stuck in hangar - check orders are set and vehicle is started
+2. Congestion delays - upgrade airport or reduce aircraft count
+3. Airport demolished - rebuild and reassign orders
+4. Wrong airport type - some aircraft need specific airport sizes
+
+**Monitoring aircraft status:**
+```bash
+# Check all aircraft status
+ttdctl vehicle list aircraft
+
+# Check specific aircraft details
+ttdctl vehicle get <vehicle_id>
+
+# Check airport station for waiting cargo/passengers
+ttdctl station get <airport_station_id>
+```
 
 ---
 

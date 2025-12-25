@@ -144,6 +144,52 @@ ttdctl rail signal 52 100 --track x --signal path
 
 ---
 
+## Removing Infrastructure
+
+**IMPORTANT: You may ONLY remove rail infrastructure that YOU placed. See AGENT_RULES.md Rule 5.**
+
+### What You CAN Delete
+- Rail tracks you built
+- Rail stations you built
+- Rail depots you built
+- Signals you placed
+
+### What You CANNOT Delete
+- Roads, road stops, road depots (Road Specialist's domain)
+- Docks, ship depots, buoys (Marine Specialist's domain)
+- Airports, heliports (Air Specialist's domain)
+- ANY infrastructure placed by another specialist or pre-existing
+
+### Removal Commands
+
+```bash
+# Remove a rail station tile
+ttdctl station remove <tile>
+# Optional: --keep-rail to leave the track underneath
+
+# Remove a rail depot
+ttdctl depot remove <tile>
+
+# Remove a single rail track piece
+ttdctl rail remove <x> <y> --track <type>
+# Track types: x, y, upper, lower, left, right
+```
+
+### When to Remove Infrastructure
+
+**Valid reasons:**
+- Station placed in wrong location - remove and rebuild correctly
+- Track layout needs redesign
+- Depot blocking expansion
+- Simplifying unused junctions
+
+**Invalid reasons:**
+- Making room for non-rail infrastructure
+- Removing infrastructure you didn't place
+- "Cleaning up" other specialists' work
+
+---
+
 ## Vehicle Operations
 
 ### Listing Available Engines
@@ -307,6 +353,39 @@ Place signals every 5-10 tiles. Use path signals at station throats.
 
 ---
 
+## Verifying Your Work
+
+**CRITICAL:** Always verify your routes are properly connected before deploying trains.
+
+### Route Connectivity Check
+
+```bash
+# Check if two tiles are connected by rail
+ttdctl route check <from_tile> <to_tile> --type rail
+
+# Example: Verify track between station and depot
+ttdctl route check 15360 15420 --type rail
+```
+
+**Use this command:**
+- After building a new track line
+- Before deploying trains on a new route
+- When the Overseer reports "vehicle lost" alerts
+- After modifying existing track layouts
+
+**Response interpretation:**
+- `connected: true` - Route is valid, trains can travel between points
+- `connected: false` - Track is broken, find and fix the gap
+
+**Common connectivity issues:**
+1. Missing track piece at a junction
+2. Track built on wrong tile
+3. Diagonal tracks not properly joined
+4. Station not connected to the main line
+5. Depot not facing the right direction
+
+---
+
 ## Reporting Format
 
 Every 5 minutes, write to `reports/ROUND_<N>_TRAIN.md`:
@@ -386,6 +465,11 @@ ttdctl order append <vehicle_id> --station <id> [--load X] [--unload Y]
 ttdctl order insert <vehicle_id> --index <n> --station <id>
 ttdctl order remove <vehicle_id> --index <n>
 ttdctl order share <v1> <v2> --mode <share|copy|unshare>
+```
+
+### Verification
+```bash
+ttdctl route check <from_tile> <to_tile> --type rail
 ```
 
 ### Information

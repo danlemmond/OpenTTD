@@ -38,8 +38,17 @@
 #include "../newgrf_airport.h"
 #include "../station_map.h"
 #include "../linkgraph/linkgraph_base.h"
+#include "../news_func.h"
+#include "../news_type.h"
+#include "../road_map.h"
+#include "../rail_map.h"
+#include "../water_map.h"
+#include "../depot_map.h"
 
 #include "../safeguards.h"
+
+/* Forward declaration for news access */
+const NewsContainer &GetNews();
 
 static const char *VehicleTypeToString(VehicleType type)
 {
@@ -54,7 +63,8 @@ static const char *VehicleTypeToString(VehicleType type)
 
 static const char *VehicleStateToString(const Vehicle *v)
 {
-	if (v->IsStoppedInDepot()) return "in_depot";
+	/* Use First() since IsStoppedInDepot() requires primary vehicle */
+	if (v->First()->IsStoppedInDepot()) return "in_depot";
 	if (v->vehstatus.Test(VehState::Crashed)) return "crashed";
 	if (v->vehstatus.Test(VehState::Stopped)) return "stopped";
 	if (v->breakdown_ctr != 0) return "broken";
@@ -1696,6 +1706,352 @@ static nlohmann::json HandleAirportInfo(const nlohmann::json &params)
 	return result;
 }
 
+/**
+ * Convert NewsType to a string.
+ */
+static const char *NewsTypeToString(NewsType type)
+{
+	switch (type) {
+		case NewsType::ArrivalCompany: return "arrival_company";
+		case NewsType::ArrivalOther: return "arrival_other";
+		case NewsType::Accident: return "accident";
+		case NewsType::AccidentOther: return "accident_other";
+		case NewsType::CompanyInfo: return "company_info";
+		case NewsType::IndustryOpen: return "industry_open";
+		case NewsType::IndustryClose: return "industry_close";
+		case NewsType::Economy: return "economy";
+		case NewsType::IndustryCompany: return "industry_company";
+		case NewsType::IndustryOther: return "industry_other";
+		case NewsType::IndustryNobody: return "industry_nobody";
+		case NewsType::Advice: return "advice";
+		case NewsType::NewVehicles: return "new_vehicles";
+		case NewsType::Acceptance: return "acceptance";
+		case NewsType::Subsidies: return "subsidies";
+		case NewsType::General: return "general";
+		default: return "unknown";
+	}
+}
+
+/**
+ * Convert AdviceType to a string.
+ */
+static const char *AdviceTypeToString(AdviceType type)
+{
+	switch (type) {
+		case AdviceType::AircraftDestinationTooFar: return "aircraft_destination_too_far";
+		case AdviceType::AutorenewFailed: return "autorenew_failed";
+		case AdviceType::Order: return "order_problem";
+		case AdviceType::RefitFailed: return "refit_failed";
+		case AdviceType::TrainStuck: return "train_stuck";
+		case AdviceType::VehicleLost: return "vehicle_lost";
+		case AdviceType::VehicleOld: return "vehicle_old";
+		case AdviceType::VehicleUnprofitable: return "vehicle_unprofitable";
+		case AdviceType::VehicleWaiting: return "vehicle_waiting";
+		default: return "unknown";
+	}
+}
+
+/**
+ * Handler for company.alerts - Get recent news/alerts relevant to the company.
+ *
+ * Parameters:
+ *   company: Company ID (default: 0)
+ *   limit: Maximum number of alerts to return (default: 20)
+ *   types: Optional array of types to filter by (default: all advice/accident types)
+ *
+ * Returns:
+ *   alerts: Array of alert objects with type, message, date, and references
+ */
+static nlohmann::json HandleCompanyAlerts(const nlohmann::json &params)
+{
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	int limit = params.value("limit", 20);
+
+	nlohmann::json result;
+	nlohmann::json alerts = nlohmann::json::array();
+
+	const NewsContainer &news = GetNews();
+	int count = 0;
+
+	for (const NewsItem &item : news) {
+		if (count >= limit) break;
+
+		/* Filter to relevant news types for company alerts */
+		bool relevant = false;
+		switch (item.type) {
+			case NewsType::Advice:
+			case NewsType::Accident:
+				relevant = true;
+				break;
+			case NewsType::IndustryCompany:
+			case NewsType::ArrivalCompany:
+				relevant = true;
+				break;
+			default:
+				break;
+		}
+
+		if (!relevant) continue;
+
+		/* Check if this news item is relevant to the specified company */
+		/* For vehicle news, check if the vehicle belongs to the company */
+		if (std::holds_alternative<VehicleID>(item.ref1)) {
+			VehicleID vid = std::get<VehicleID>(item.ref1);
+			const Vehicle *v = Vehicle::GetIfValid(vid);
+			if (v == nullptr || v->owner != company) continue;
+		}
+
+		nlohmann::json alert;
+		alert["type"] = NewsTypeToString(item.type);
+		alert["advice_type"] = AdviceTypeToString(item.advice_type);
+		alert["date"] = item.date.base();
+		alert["message"] = item.GetStatusText();
+
+		/* Add reference information */
+		if (std::holds_alternative<VehicleID>(item.ref1)) {
+			alert["vehicle_id"] = std::get<VehicleID>(item.ref1).base();
+		}
+		if (std::holds_alternative<StationID>(item.ref1)) {
+			alert["station_id"] = std::get<StationID>(item.ref1).base();
+		}
+		if (std::holds_alternative<TileIndex>(item.ref1)) {
+			alert["tile"] = std::get<TileIndex>(item.ref1).base();
+		}
+		if (std::holds_alternative<IndustryID>(item.ref1)) {
+			alert["industry_id"] = std::get<IndustryID>(item.ref1).base();
+		}
+
+		alerts.push_back(alert);
+		count++;
+	}
+
+	result["alerts"] = alerts;
+	result["count"] = count;
+
+	return result;
+}
+
+/**
+ * Check if a road tile is connected to the road network.
+ * Uses flood fill to find if we can reach from start to target.
+ */
+static bool IsRoadConnected(TileIndex start, TileIndex target, int max_tiles = 1000)
+{
+	if (start == target) return true;
+	if (!IsValidTile(start) || !IsValidTile(target)) return false;
+
+	/* Simple BFS to check connectivity */
+	std::vector<TileIndex> queue;
+	std::set<uint32_t> visited;
+
+	queue.push_back(start);
+	visited.insert(start.base());
+
+	int tiles_checked = 0;
+
+	while (!queue.empty() && tiles_checked < max_tiles) {
+		TileIndex current = queue.back();
+		queue.pop_back();
+		tiles_checked++;
+
+		if (current == target) return true;
+
+		/* Check all 4 directions */
+		for (DiagDirection dir = DIAGDIR_BEGIN; dir < DIAGDIR_END; dir++) {
+			TileIndex next = TileAddByDiagDir(current, dir);
+			if (!IsValidTile(next)) continue;
+			if (visited.count(next.base())) continue;
+
+			/* Check if the next tile has road */
+			bool has_road = false;
+			if (IsTileType(next, MP_ROAD)) {
+				has_road = true;
+			} else if (IsTileType(next, MP_STATION)) {
+				/* Road stops are also valid road tiles */
+				if (IsStationRoadStopTile(next) || IsRoadWaypointTile(next)) {
+					has_road = true;
+				}
+			}
+
+			if (has_road) {
+				visited.insert(next.base());
+				queue.push_back(next);
+			}
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Check if a rail tile is connected to another via rail.
+ */
+static bool IsRailConnected(TileIndex start, TileIndex target, int max_tiles = 1000)
+{
+	if (start == target) return true;
+	if (!IsValidTile(start) || !IsValidTile(target)) return false;
+
+	std::vector<TileIndex> queue;
+	std::set<uint32_t> visited;
+
+	queue.push_back(start);
+	visited.insert(start.base());
+
+	int tiles_checked = 0;
+
+	while (!queue.empty() && tiles_checked < max_tiles) {
+		TileIndex current = queue.back();
+		queue.pop_back();
+		tiles_checked++;
+
+		if (current == target) return true;
+
+		/* Check all 4 directions */
+		for (DiagDirection dir = DIAGDIR_BEGIN; dir < DIAGDIR_END; dir++) {
+			TileIndex next = TileAddByDiagDir(current, dir);
+			if (!IsValidTile(next)) continue;
+			if (visited.count(next.base())) continue;
+
+			/* Check if the next tile has rail */
+			bool has_rail = false;
+			if (IsTileType(next, MP_RAILWAY)) {
+				has_rail = true;
+			} else if (IsTileType(next, MP_STATION)) {
+				if (IsRailStationTile(next)) {
+					has_rail = true;
+				}
+			}
+
+			if (has_rail) {
+				visited.insert(next.base());
+				queue.push_back(next);
+			}
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Handler for route.check - Check if two tiles are connected for a given transport type.
+ *
+ * Parameters:
+ *   start_tile or start_x/start_y: Starting tile (required)
+ *   end_tile or end_x/end_y: Ending tile (required)
+ *   transport_type: "road", "rail", "water" (required)
+ *
+ * Returns:
+ *   connected: Whether the tiles are connected
+ *   start_tile: The starting tile
+ *   end_tile: The ending tile
+ */
+static nlohmann::json HandleRouteCheck(const nlohmann::json &params)
+{
+	/* Get start tile */
+	TileIndex start_tile;
+	if (params.contains("start_tile")) {
+		start_tile = static_cast<TileIndex>(params["start_tile"].get<uint32_t>());
+	} else if (params.contains("start_x") && params.contains("start_y")) {
+		uint x = params["start_x"].get<uint>();
+		uint y = params["start_y"].get<uint>();
+		if (x >= Map::SizeX() || y >= Map::SizeY()) {
+			throw std::runtime_error("Start coordinates out of bounds");
+		}
+		start_tile = TileXY(x, y);
+	} else {
+		throw std::runtime_error("Missing required parameter: start_tile or start_x/start_y");
+	}
+
+	/* Get end tile */
+	TileIndex end_tile;
+	if (params.contains("end_tile")) {
+		end_tile = static_cast<TileIndex>(params["end_tile"].get<uint32_t>());
+	} else if (params.contains("end_x") && params.contains("end_y")) {
+		uint x = params["end_x"].get<uint>();
+		uint y = params["end_y"].get<uint>();
+		if (x >= Map::SizeX() || y >= Map::SizeY()) {
+			throw std::runtime_error("End coordinates out of bounds");
+		}
+		end_tile = TileXY(x, y);
+	} else {
+		throw std::runtime_error("Missing required parameter: end_tile or end_x/end_y");
+	}
+
+	/* Get transport type */
+	if (!params.contains("transport_type")) {
+		throw std::runtime_error("Missing required parameter: transport_type");
+	}
+	std::string transport_type = params["transport_type"].get<std::string>();
+
+	nlohmann::json result;
+	result["start_tile"] = start_tile.base();
+	result["end_tile"] = end_tile.base();
+	result["transport_type"] = transport_type;
+
+	bool connected = false;
+	std::string error;
+
+	if (transport_type == "road") {
+		/* Check if start tile has road */
+		bool start_has_road = IsTileType(start_tile, MP_ROAD) ||
+			(IsTileType(start_tile, MP_STATION) && (IsStationRoadStopTile(start_tile) || IsRoadWaypointTile(start_tile)));
+		bool end_has_road = IsTileType(end_tile, MP_ROAD) ||
+			(IsTileType(end_tile, MP_STATION) && (IsStationRoadStopTile(end_tile) || IsRoadWaypointTile(end_tile)));
+
+		if (!start_has_road) {
+			error = "Start tile does not have road";
+		} else if (!end_has_road) {
+			error = "End tile does not have road";
+		} else {
+			connected = IsRoadConnected(start_tile, end_tile);
+			if (!connected) {
+				error = "Tiles are not connected by road";
+			}
+		}
+	} else if (transport_type == "rail") {
+		bool start_has_rail = IsTileType(start_tile, MP_RAILWAY) ||
+			(IsTileType(start_tile, MP_STATION) && IsRailStationTile(start_tile));
+		bool end_has_rail = IsTileType(end_tile, MP_RAILWAY) ||
+			(IsTileType(end_tile, MP_STATION) && IsRailStationTile(end_tile));
+
+		if (!start_has_rail) {
+			error = "Start tile does not have rail";
+		} else if (!end_has_rail) {
+			error = "End tile does not have rail";
+		} else {
+			connected = IsRailConnected(start_tile, end_tile);
+			if (!connected) {
+				error = "Tiles are not connected by rail";
+			}
+		}
+	} else if (transport_type == "water") {
+		/* Water is always connected if both tiles are water */
+		bool start_is_water = IsTileType(start_tile, MP_WATER) ||
+			(IsTileType(start_tile, MP_STATION) && IsDockTile(start_tile));
+		bool end_is_water = IsTileType(end_tile, MP_WATER) ||
+			(IsTileType(end_tile, MP_STATION) && IsDockTile(end_tile));
+
+		if (!start_is_water) {
+			error = "Start tile is not water/dock";
+		} else if (!end_is_water) {
+			error = "End tile is not water/dock";
+		} else {
+			/* For water, assume connected if both are water tiles */
+			/* Full water pathfinding would be complex */
+			connected = true;
+		}
+	} else {
+		throw std::runtime_error("Invalid transport_type - must be: road, rail, water");
+	}
+
+	result["connected"] = connected;
+	if (!error.empty()) {
+		result["error"] = error;
+	}
+
+	return result;
+}
+
 void RpcRegisterQueryHandlers(RpcServer &server)
 {
 	server.RegisterHandler("ping", HandlePing);
@@ -1726,4 +2082,6 @@ void RpcRegisterQueryHandlers(RpcServer &server)
 	server.RegisterHandler("station.getCargoPlanned", HandleStationGetCargoPlanned);
 	server.RegisterHandler("vehicle.getCargoByType", HandleVehicleGetCargoByType);
 	server.RegisterHandler("airport.info", HandleAirportInfo);
+	server.RegisterHandler("company.alerts", HandleCompanyAlerts);
+	server.RegisterHandler("route.check", HandleRouteCheck);
 }

@@ -131,6 +131,55 @@ ttdctl road depot 48 100 --direction se
 
 ---
 
+## Removing Infrastructure
+
+**IMPORTANT: You may ONLY remove road infrastructure that YOU placed. See AGENT_RULES.md Rule 5.**
+
+### What You CAN Delete
+- Roads you built
+- Bus stops you built
+- Truck stops you built
+- Road depots you built
+
+### What You CANNOT Delete
+- Rail tracks, rail stations, rail depots (Train Specialist's domain)
+- Docks, ship depots, buoys (Marine Specialist's domain)
+- Airports, heliports (Air Specialist's domain)
+- Town-owned roads (even if you built on them)
+- ANY infrastructure placed by another specialist or pre-existing
+
+### Removal Commands
+
+```bash
+# Remove a bus or truck stop
+ttdctl station remove <tile>
+# Optional: --remove-road to also remove the road underneath
+
+# Remove a road depot
+ttdctl depot remove <tile>
+
+# Remove road
+ttdctl road remove <x> <y>
+# For longer stretches:
+ttdctl road remove <x> <y> --end-tile <tile> --axis <x|y>
+```
+
+### When to Remove Infrastructure
+
+**Valid reasons:**
+- Stop placed in wrong location - remove and rebuild correctly
+- Depot needs repositioning
+- Removing dead-end road that's no longer needed
+- Reorganizing route layout
+
+**Invalid reasons:**
+- Making room for non-road infrastructure
+- Removing infrastructure you didn't place
+- "Cleaning up" other specialists' work
+- Removing town roads to reroute traffic
+
+---
+
 ## Vehicle Operations
 
 ### Listing Available Vehicles
@@ -344,6 +393,39 @@ ttdctl engine get <engine_id>
 
 ---
 
+## Verifying Your Work
+
+**CRITICAL:** Always verify your routes are properly connected before deploying vehicles.
+
+### Route Connectivity Check
+
+```bash
+# Check if two tiles are connected by road
+ttdctl route check <from_tile> <to_tile> --type road
+
+# Example: Verify road between depot and bus stop
+ttdctl route check 5000 5100 --type road
+```
+
+**Use this command:**
+- After building a new road
+- After building a depot or stop
+- Before deploying vehicles on a new route
+- When the Overseer reports "vehicle lost" alerts
+
+**Response interpretation:**
+- `connected: true` - Route is valid, vehicles can travel between points
+- `connected: false` - Road is broken, find and fix the gap
+
+**Common connectivity issues:**
+1. Road not connected to existing road network
+2. Depot facing wrong direction (not toward road)
+3. Stop placed without road access
+4. Missing road piece at intersection
+5. One-way roads blocking return path
+
+---
+
 ## Reporting Format
 
 Every 5 minutes, write to `reports/ROUND_<N>_ROAD.md`:
@@ -433,6 +515,11 @@ ttdctl order append <vehicle_id> --station <id> [--load X] [--unload Y]
 ttdctl order insert <vehicle_id> --index <n> --station <id>
 ttdctl order remove <vehicle_id> --index <n>
 ttdctl order share <v1> <v2> --mode <share|copy|unshare>
+```
+
+### Verification
+```bash
+ttdctl route check <from_tile> <to_tile> --type road
 ```
 
 ### Information
