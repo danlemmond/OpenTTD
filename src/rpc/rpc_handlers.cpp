@@ -26,6 +26,7 @@
 #include "../strings_func.h"
 #include "../string_func.h"
 #include "../table/strings.h"
+#include "../order_base.h"
 
 #include "../safeguards.h"
 
@@ -602,6 +603,135 @@ static nlohmann::json HandleTownGet(const nlohmann::json &params)
 	return result;
 }
 
+static const char *OrderTypeToString(OrderType type)
+{
+	switch (type) {
+		case OT_NOTHING: return "nothing";
+		case OT_GOTO_STATION: return "goto_station";
+		case OT_GOTO_DEPOT: return "goto_depot";
+		case OT_LOADING: return "loading";
+		case OT_LEAVESTATION: return "leave_station";
+		case OT_DUMMY: return "dummy";
+		case OT_GOTO_WAYPOINT: return "goto_waypoint";
+		case OT_CONDITIONAL: return "conditional";
+		case OT_IMPLICIT: return "implicit";
+		default: return "unknown";
+	}
+}
+
+static const char *LoadTypeToString(OrderLoadType type)
+{
+	switch (type) {
+		case OrderLoadType::LoadIfPossible: return "load_if_possible";
+		case OrderLoadType::FullLoad: return "full_load";
+		case OrderLoadType::FullLoadAny: return "full_load_any";
+		case OrderLoadType::NoLoad: return "no_load";
+		default: return "unknown";
+	}
+}
+
+static const char *UnloadTypeToString(OrderUnloadType type)
+{
+	switch (type) {
+		case OrderUnloadType::UnloadIfPossible: return "unload_if_possible";
+		case OrderUnloadType::Unload: return "unload";
+		case OrderUnloadType::Transfer: return "transfer";
+		case OrderUnloadType::NoUnload: return "no_unload";
+		default: return "unknown";
+	}
+}
+
+static nlohmann::json OrderToJson(const Order &order, VehicleOrderID index)
+{
+	nlohmann::json order_json;
+	order_json["index"] = index;
+	order_json["type"] = OrderTypeToString(order.GetType());
+
+	if (order.IsGotoOrder()) {
+		order_json["destination"] = order.GetDestination().base();
+
+		/* Get destination name based on order type */
+		if (order.IsType(OT_GOTO_STATION) || order.IsType(OT_GOTO_WAYPOINT)) {
+			const Station *st = Station::GetIfValid(order.GetDestination().ToStationID());
+			if (st != nullptr) {
+				order_json["destination_name"] = StrMakeValid(st->GetCachedName());
+			}
+		} else if (order.IsType(OT_GOTO_DEPOT)) {
+			order_json["destination_name"] = "Depot";
+		}
+	}
+
+	if (order.IsType(OT_GOTO_STATION)) {
+		order_json["load_type"] = LoadTypeToString(order.GetLoadType());
+		order_json["unload_type"] = UnloadTypeToString(order.GetUnloadType());
+
+		bool non_stop = order.GetNonStopType().Test(OrderNonStopFlag::NoIntermediate);
+		bool via = order.GetNonStopType().Test(OrderNonStopFlag::NoDestination);
+		order_json["non_stop"] = non_stop;
+		order_json["via"] = via;
+	}
+
+	if (order.IsType(OT_CONDITIONAL)) {
+		order_json["skip_to"] = order.GetConditionSkipToOrder();
+		order_json["condition_value"] = order.GetConditionValue();
+	}
+
+	if (order.GetWaitTime() > 0) {
+		order_json["wait_time"] = order.GetWaitTime();
+		order_json["wait_timetabled"] = order.IsWaitTimetabled();
+	}
+
+	if (order.GetTravelTime() > 0) {
+		order_json["travel_time"] = order.GetTravelTime();
+		order_json["travel_timetabled"] = order.IsTravelTimetabled();
+	}
+
+	if (order.GetMaxSpeed() != UINT16_MAX) {
+		order_json["max_speed"] = order.GetMaxSpeed();
+	}
+
+	return order_json;
+}
+
+static nlohmann::json HandleOrderList(const nlohmann::json &params)
+{
+	if (!params.contains("vehicle_id")) {
+		throw std::runtime_error("Missing required parameter: vehicle_id");
+	}
+
+	VehicleID vid = static_cast<VehicleID>(params["vehicle_id"].get<int>());
+	const Vehicle *v = Vehicle::GetIfValid(vid);
+	if (v == nullptr) {
+		throw std::runtime_error("Invalid vehicle ID");
+	}
+
+	nlohmann::json result;
+	result["vehicle_id"] = v->index.base();
+	result["vehicle_name"] = StrMakeValid(GetString(STR_VEHICLE_NAME, v->index));
+	result["current_order_index"] = v->cur_real_order_index;
+
+	nlohmann::json orders = nlohmann::json::array();
+
+	if (v->orders != nullptr) {
+		result["num_orders"] = v->orders->GetNumOrders();
+		result["is_shared"] = v->orders->IsShared();
+		if (v->orders->IsShared()) {
+			result["num_vehicles_sharing"] = v->orders->GetNumVehicles();
+		}
+
+		VehicleOrderID idx = 0;
+		for (const Order &order : v->orders->GetOrders()) {
+			orders.push_back(OrderToJson(order, idx++));
+		}
+	} else {
+		result["num_orders"] = 0;
+		result["is_shared"] = false;
+	}
+
+	result["orders"] = orders;
+	return result;
+}
+
 void RpcRegisterHandlers(RpcServer &server)
 {
 	server.RegisterHandler("ping", HandlePing);
@@ -618,4 +748,5 @@ void RpcRegisterHandlers(RpcServer &server)
 	server.RegisterHandler("tile.get", HandleTileGet);
 	server.RegisterHandler("town.list", HandleTownList);
 	server.RegisterHandler("town.get", HandleTownGet);
+	server.RegisterHandler("order.list", HandleOrderList);
 }

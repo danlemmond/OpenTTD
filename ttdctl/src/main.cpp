@@ -47,6 +47,7 @@ static void PrintUsage()
 	std::cout << "  map                 Map information and distance\n";
 	std::cout << "  tile                Tile information\n";
 	std::cout << "  town                Town information\n";
+	std::cout << "  order               Vehicle order information\n";
 	std::cout << "\nExamples:\n";
 	std::cout << "  ttdctl ping\n";
 	std::cout << "  ttdctl game status\n";
@@ -62,6 +63,7 @@ static void PrintUsage()
 	std::cout << "  ttdctl tile get 100 100\n";
 	std::cout << "  ttdctl town list\n";
 	std::cout << "  ttdctl town get 0\n";
+	std::cout << "  ttdctl order list 42\n";
 }
 
 static CliOptions ParseArgs(int argc, char *argv[])
@@ -644,6 +646,69 @@ static int HandleTownGet(RpcClient &client, const CliOptions &opts)
 	}
 }
 
+static int HandleOrderList(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.empty()) {
+			std::cerr << "Error: vehicle ID required\n";
+			std::cerr << "Usage: ttdctl order list <vehicle_id>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["vehicle_id"] = std::stoi(opts.args[0]);
+
+		auto result = client.Call("order.list", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << "Orders for " << result["vehicle_name"].get<std::string>()
+		          << " (#" << result["vehicle_id"].get<int>() << ")\n";
+		std::cout << "-------------------------------------------\n";
+		std::cout << "Total orders: " << result["num_orders"].get<int>();
+		if (result["is_shared"].get<bool>()) {
+			std::cout << " (shared with " << result["num_vehicles_sharing"].get<int>() << " vehicles)";
+		}
+		std::cout << "\n";
+		std::cout << "Current order: #" << result["current_order_index"].get<int>() << "\n\n";
+
+		for (const auto &order : result["orders"]) {
+			int idx = order["index"].get<int>();
+			std::string type = order["type"].get<std::string>();
+			bool is_current = (idx == result["current_order_index"].get<int>());
+
+			std::cout << (is_current ? ">> " : "   ");
+			std::cout << "#" << idx << " " << type;
+
+			if (order.contains("destination_name")) {
+				std::cout << " -> " << order["destination_name"].get<std::string>();
+			}
+
+			if (order.contains("load_type")) {
+				std::cout << " [" << order["load_type"].get<std::string>();
+				std::cout << "/" << order["unload_type"].get<std::string>() << "]";
+			}
+
+			if (order.contains("non_stop") && order["non_stop"].get<bool>()) {
+				std::cout << " (non-stop)";
+			}
+			if (order.contains("via") && order["via"].get<bool>()) {
+				std::cout << " (via)";
+			}
+
+			std::cout << "\n";
+		}
+
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	auto opts = ParseArgs(argc, argv);
@@ -698,6 +763,10 @@ int main(int argc, char *argv[])
 			return HandleTownList(client, opts);
 		} else if (opts.action == "get") {
 			return HandleTownGet(client, opts);
+		}
+	} else if (opts.resource == "order") {
+		if (opts.action == "list" || opts.action.empty()) {
+			return HandleOrderList(client, opts);
 		}
 	}
 
