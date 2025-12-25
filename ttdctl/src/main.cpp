@@ -947,6 +947,8 @@ static int HandleOrderAppend(RpcClient &client, const CliOptions &opts)
 		if (!params.contains("destination")) {
 			std::cerr << "Error: --station is required\n";
 			std::cerr << "Usage: ttdctl order append <vehicle_id> --station <id> [--load TYPE] [--unload TYPE] [--non-stop]\n";
+			std::cerr << "  Load types: default, full, full_any, none\n";
+			std::cerr << "  Unload types: default, unload, transfer, none\n";
 			return 1;
 		}
 
