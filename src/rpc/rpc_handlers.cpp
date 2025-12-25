@@ -40,6 +40,7 @@
 #include "../direction_func.h"
 #include "../newgrf_station.h"
 #include "../newgrf_roadstop.h"
+#include "../genworld.h"
 
 #include "../safeguards.h"
 
@@ -1721,6 +1722,37 @@ static nlohmann::json HandleRailBuildStation(const nlohmann::json &params)
 	return result;
 }
 
+/* ===================== */
+/* === META HANDLERS === */
+/* ===================== */
+
+/**
+ * Handler for game.newgame - Start a new game with default settings.
+ * This triggers world generation and starts a fresh game.
+ */
+static nlohmann::json HandleGameNewGame(const nlohmann::json &params)
+{
+	uint32_t seed = GENERATE_NEW_SEED;  /* Random seed */
+
+	if (params.contains("seed")) {
+		seed = params["seed"].get<uint32_t>();
+	}
+
+	/* Trigger new game generation */
+	StartNewGameWithoutGUI(seed);
+
+	nlohmann::json result;
+	result["success"] = true;
+	result["message"] = "New game generation started";
+	if (seed == GENERATE_NEW_SEED) {
+		result["seed"] = "random";
+	} else {
+		result["seed"] = seed;
+	}
+
+	return result;
+}
+
 void RpcRegisterHandlers(RpcServer &server)
 {
 	server.RegisterHandler("ping", HandlePing);
@@ -1755,4 +1787,7 @@ void RpcRegisterHandlers(RpcServer &server)
 	server.RegisterHandler("rail.buildTrack", HandleRailBuildTrack);
 	server.RegisterHandler("rail.buildDepot", HandleRailBuildDepot);
 	server.RegisterHandler("rail.buildStation", HandleRailBuildStation);
+
+	/* Meta handlers */
+	server.RegisterHandler("game.newgame", HandleGameNewGame);
 }

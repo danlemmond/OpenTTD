@@ -65,9 +65,13 @@ static void PrintUsage()
 	std::cout << "  rail track          Build railway track\n";
 	std::cout << "  rail depot          Build a train depot\n";
 	std::cout << "  rail station        Build a train station\n";
+	std::cout << "\nMeta Commands:\n";
+	std::cout << "  game newgame        Start a new game with default settings\n";
 	std::cout << "\nExamples:\n";
 	std::cout << "  ttdctl ping\n";
 	std::cout << "  ttdctl game status\n";
+	std::cout << "  ttdctl game newgame                 # Generate new world\n";
+	std::cout << "  ttdctl game newgame --seed 12345    # With specific seed\n";
 	std::cout << "  ttdctl company list\n";
 	std::cout << "  ttdctl vehicle list road\n";
 	std::cout << "  ttdctl vehicle get 42\n";
@@ -167,6 +171,37 @@ static int HandlePing(RpcClient &client, [[maybe_unused]] const CliOptions &opts
 		std::cerr << "Error: " << e.what() << "\n";
 	}
 	return 1;
+}
+
+static int HandleGameNewGame(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		nlohmann::json params;
+
+		/* Parse optional seed */
+		for (size_t i = 0; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--seed" && i + 1 < opts.args.size()) {
+				params["seed"] = static_cast<uint32_t>(std::stoul(opts.args[++i]));
+			}
+		}
+
+		auto result = client.Call("game.newgame", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		if (result["seed"].is_string()) {
+			std::cout << "New game started (seed: " << result["seed"].get<std::string>() << ")\n";
+		} else {
+			std::cout << "New game started (seed: " << result["seed"].get<uint32_t>() << ")\n";
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
 }
 
 static int HandleGameStatus(RpcClient &client, const CliOptions &opts)
@@ -1452,6 +1487,8 @@ int main(int argc, char *argv[])
 	} else if (opts.resource == "game") {
 		if (opts.action == "status" || opts.action.empty()) {
 			return HandleGameStatus(client, opts);
+		} else if (opts.action == "newgame") {
+			return HandleGameNewGame(client, opts);
 		}
 	} else if (opts.resource == "company") {
 		if (opts.action == "list" || opts.action.empty()) {
