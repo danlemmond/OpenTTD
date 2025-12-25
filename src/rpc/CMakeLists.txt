@@ -5,6 +5,7 @@ add_files(
     rpc_handlers_infra.cpp
     rpc_handlers_meta.cpp
     rpc_handlers_query.cpp
+    rpc_handlers_viewport.cpp
     rpc_server.cpp
     rpc_server.h
 )

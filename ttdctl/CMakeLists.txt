@@ -13,6 +13,12 @@ set(NLOHMANN_JSON_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/src/3rdparty")
 
 add_executable(ttdctl
     src/main.cpp
+    src/cli_common.cpp
+    src/cli_common.h
+    src/commands_query.cpp
+    src/commands_action.cpp
+    src/commands_infra.cpp
+    src/commands_vehicle.cpp
     src/rpc_client.cpp
     src/rpc_client.h
 )

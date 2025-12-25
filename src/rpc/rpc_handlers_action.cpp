@@ -26,6 +26,10 @@
 #include "../train.h"
 #include "../roadveh.h"
 #include "../cargotype.h"
+#include "../company_base.h"
+#include "../misc_cmd.h"
+#include "../town.h"
+#include "../town_cmd.h"
 
 #include "../safeguards.h"
 
@@ -369,6 +373,10 @@ static nlohmann::json HandleVehicleBuild(const nlohmann::json &params)
 
 	cur_company.Restore();
 
+	if (cost.Succeeded()) {
+		RpcRecordActivity(depot_tile, "vehicle.build");
+	}
+
 	nlohmann::json result;
 	result["success"] = cost.Succeeded();
 
@@ -514,6 +522,10 @@ static nlohmann::json HandleVehicleClone(const nlohmann::json &params)
 
 	cur_company.Restore();
 
+	if (cost.Succeeded()) {
+		RpcRecordActivity(depot_tile, "vehicle.clone");
+	}
+
 	nlohmann::json result;
 	result["success"] = cost.Succeeded();
 	result["source_vehicle_id"] = source_vid.base();
@@ -535,6 +547,492 @@ static nlohmann::json HandleVehicleClone(const nlohmann::json &params)
 	return result;
 }
 
+/**
+ * Handler for company.setLoan - Set the company's loan amount.
+ *
+ * Parameters:
+ *   amount: Target loan amount (required)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the loan change succeeded
+ *   new_loan: The new loan amount
+ *   old_loan: The previous loan amount
+ */
+static nlohmann::json HandleCompanySetLoan(const nlohmann::json &params)
+{
+	if (!params.contains("amount")) {
+		throw std::runtime_error("Missing required parameter: amount");
+	}
+
+	Money target_amount = static_cast<Money>(params["amount"].get<int64_t>());
+	if (target_amount < 0) {
+		throw std::runtime_error("Loan amount must be non-negative");
+	}
+
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	if (!Company::IsValidID(company)) {
+		throw std::runtime_error("Invalid company ID");
+	}
+
+	const Company *c = Company::Get(company);
+	Money old_loan = c->current_loan;
+
+	/* Switch to company context */
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	CommandCost cost;
+	if (target_amount > old_loan) {
+		/* Need to increase loan */
+		Money increase = target_amount - old_loan;
+		cost = Command<CMD_INCREASE_LOAN>::Do(flags, LoanCommand::Amount, increase);
+	} else if (target_amount < old_loan) {
+		/* Need to decrease loan */
+		Money decrease = old_loan - target_amount;
+		cost = Command<CMD_DECREASE_LOAN>::Do(flags, LoanCommand::Amount, decrease);
+	}
+	/* If target == old_loan, nothing to do, cost remains default (success) */
+
+	cur_company.Restore();
+
+	/* Re-fetch company for updated loan amount */
+	c = Company::Get(company);
+
+	nlohmann::json result;
+	result["success"] = cost.Succeeded();
+	result["company"] = company.base();
+	result["old_loan"] = old_loan.base();
+	result["new_loan"] = c->current_loan.base();
+	result["max_loan"] = _economy.max_loan.base();
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to set loan - check amount is within valid range and is a multiple of loan interval";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for vehicle.refit - Refit a vehicle to a different cargo type.
+ *
+ * Parameters:
+ *   vehicle_id: The vehicle ID to refit (required)
+ *   cargo: The cargo type ID to refit to (required)
+ *
+ * Note: Vehicle must be stopped in a depot to be refitted.
+ *
+ * Returns:
+ *   success: Whether the refit succeeded
+ *   capacity: New cargo capacity after refit
+ *   cargo_name: Name of the new cargo type
+ */
+static nlohmann::json HandleVehicleRefit(const nlohmann::json &params)
+{
+	if (!params.contains("vehicle_id")) {
+		throw std::runtime_error("Missing required parameter: vehicle_id");
+	}
+	if (!params.contains("cargo")) {
+		throw std::runtime_error("Missing required parameter: cargo");
+	}
+
+	VehicleID vid = static_cast<VehicleID>(params["vehicle_id"].get<int>());
+	const Vehicle *v = Vehicle::GetIfValid(vid);
+	if (v == nullptr) {
+		throw std::runtime_error("Invalid vehicle ID");
+	}
+
+	CargoType cargo = static_cast<CargoType>(params["cargo"].get<int>());
+	if (!IsValidCargoType(cargo)) {
+		throw std::runtime_error("Invalid cargo type");
+	}
+
+	/* Vehicle should be in depot for refit */
+	if (!v->IsStoppedInDepot()) {
+		throw std::runtime_error("Vehicle must be stopped in a depot to be refitted");
+	}
+
+	/* Switch to vehicle owner's company context */
+	Backup<CompanyID> cur_company(_current_company, v->owner);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	/* Refit the vehicle - auto_refit=false, only_this=false (refit whole chain for trains), num_vehicles=255 (all) */
+	auto [cost, capacity, mail_capacity, cargo_capacities] =
+		Command<CMD_REFIT_VEHICLE>::Do(flags, vid, cargo, 0, false, false, 255);
+
+	cur_company.Restore();
+
+	nlohmann::json result;
+	result["vehicle_id"] = vid.base();
+	result["success"] = cost.Succeeded();
+	result["cargo"] = cargo;
+
+	const CargoSpec *cs = CargoSpec::Get(cargo);
+	if (cs != nullptr) {
+		result["cargo_name"] = StrMakeValid(GetString(cs->name));
+	}
+
+	if (cost.Succeeded()) {
+		result["capacity"] = capacity;
+		result["cost"] = cost.GetCost().base();
+	} else {
+		result["error"] = "Failed to refit vehicle - check cargo type is valid for this vehicle";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for order.insert - Insert an order at a specific position.
+ *
+ * Parameters:
+ *   vehicle_id: The vehicle ID (required)
+ *   order_index: Position to insert at (required)
+ *   destination: Station ID (required)
+ *   load: Load type (default, full, full_any, none)
+ *   unload: Unload type (default, unload, transfer, none)
+ *   non_stop: Whether to skip intermediate stations
+ *
+ * Returns:
+ *   success: Whether the insert succeeded
+ *   order_index: The position where order was inserted
+ */
+static nlohmann::json HandleOrderInsert(const nlohmann::json &params)
+{
+	if (!params.contains("vehicle_id")) {
+		throw std::runtime_error("Missing required parameter: vehicle_id");
+	}
+	if (!params.contains("order_index")) {
+		throw std::runtime_error("Missing required parameter: order_index");
+	}
+	if (!params.contains("destination")) {
+		throw std::runtime_error("Missing required parameter: destination (station_id)");
+	}
+
+	VehicleID vid = static_cast<VehicleID>(params["vehicle_id"].get<int>());
+	VehicleOrderID insert_pos = static_cast<VehicleOrderID>(params["order_index"].get<int>());
+
+	const Vehicle *v = Vehicle::GetIfValid(vid);
+	if (v == nullptr || !v->IsPrimaryVehicle()) {
+		throw std::runtime_error("Invalid vehicle ID");
+	}
+
+	StationID dest_station = static_cast<StationID>(params["destination"].get<int>());
+	const Station *st = Station::GetIfValid(dest_station);
+	if (st == nullptr) {
+		throw std::runtime_error("Invalid destination station ID");
+	}
+
+	if (!CanVehicleUseStation(v, st)) {
+		throw std::runtime_error("Vehicle cannot use this station");
+	}
+
+	/* Switch to vehicle owner's company context */
+	Backup<CompanyID> cur_company(_current_company, v->owner);
+
+	/* Build the order */
+	Order order;
+	order.MakeGoToStation(dest_station);
+	order.SetStopLocation(OrderStopLocation::FarEnd);
+
+	/* Set load/unload flags */
+	std::string load_type = params.value("load", "default");
+	std::string unload_type = params.value("unload", "default");
+
+	if (load_type == "full") {
+		order.SetLoadType(OrderLoadType::FullLoad);
+	} else if (load_type == "full_any") {
+		order.SetLoadType(OrderLoadType::FullLoadAny);
+	} else if (load_type == "none") {
+		order.SetLoadType(OrderLoadType::NoLoad);
+	}
+
+	if (unload_type == "unload") {
+		order.SetUnloadType(OrderUnloadType::Unload);
+	} else if (unload_type == "transfer") {
+		order.SetUnloadType(OrderUnloadType::Transfer);
+	} else if (unload_type == "none") {
+		order.SetUnloadType(OrderUnloadType::NoUnload);
+	}
+
+	if (params.value("non_stop", false)) {
+		OrderNonStopFlags nsf;
+		nsf.Set(OrderNonStopFlag::NoIntermediate);
+		order.SetNonStopType(nsf);
+	}
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+	CommandCost cost = Command<CMD_INSERT_ORDER>::Do(flags, vid, insert_pos, order);
+
+	cur_company.Restore();
+
+	nlohmann::json result;
+	result["vehicle_id"] = vid.base();
+	result["success"] = cost.Succeeded();
+	result["order_index"] = insert_pos;
+	result["destination"] = dest_station.base();
+	result["destination_name"] = StrMakeValid(st->GetCachedName());
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to insert order";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for order.setFlags - Modify an existing order's flags.
+ *
+ * Parameters:
+ *   vehicle_id: The vehicle ID (required)
+ *   order_index: Order position to modify (required)
+ *   load: Load type (default, full, full_any, none)
+ *   unload: Unload type (default, unload, transfer, none)
+ *   non_stop: Non-stop flag (true/false)
+ *
+ * Returns:
+ *   success: Whether the modification succeeded
+ */
+static nlohmann::json HandleOrderSetFlags(const nlohmann::json &params)
+{
+	if (!params.contains("vehicle_id")) {
+		throw std::runtime_error("Missing required parameter: vehicle_id");
+	}
+	if (!params.contains("order_index")) {
+		throw std::runtime_error("Missing required parameter: order_index");
+	}
+
+	VehicleID vid = static_cast<VehicleID>(params["vehicle_id"].get<int>());
+	VehicleOrderID order_idx = static_cast<VehicleOrderID>(params["order_index"].get<int>());
+
+	const Vehicle *v = Vehicle::GetIfValid(vid);
+	if (v == nullptr || !v->IsPrimaryVehicle()) {
+		throw std::runtime_error("Invalid vehicle ID");
+	}
+
+	if (v->orders == nullptr || order_idx >= v->orders->GetNumOrders()) {
+		throw std::runtime_error("Invalid order index");
+	}
+
+	/* Switch to vehicle owner's company context */
+	Backup<CompanyID> cur_company(_current_company, v->owner);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	bool any_succeeded = false;
+	bool any_failed = false;
+
+	/* Apply load type if specified */
+	if (params.contains("load")) {
+		std::string load_type = params["load"].get<std::string>();
+		uint16_t load_val = 0;
+		if (load_type == "default") load_val = static_cast<uint16_t>(OrderLoadType::LoadIfPossible);
+		else if (load_type == "full") load_val = static_cast<uint16_t>(OrderLoadType::FullLoad);
+		else if (load_type == "full_any") load_val = static_cast<uint16_t>(OrderLoadType::FullLoadAny);
+		else if (load_type == "none") load_val = static_cast<uint16_t>(OrderLoadType::NoLoad);
+
+		CommandCost cost = Command<CMD_MODIFY_ORDER>::Do(flags, vid, order_idx, MOF_LOAD, load_val);
+		if (cost.Succeeded()) any_succeeded = true;
+		else any_failed = true;
+	}
+
+	/* Apply unload type if specified */
+	if (params.contains("unload")) {
+		std::string unload_type = params["unload"].get<std::string>();
+		uint16_t unload_val = 0;
+		if (unload_type == "default") unload_val = static_cast<uint16_t>(OrderUnloadType::UnloadIfPossible);
+		else if (unload_type == "unload") unload_val = static_cast<uint16_t>(OrderUnloadType::Unload);
+		else if (unload_type == "transfer") unload_val = static_cast<uint16_t>(OrderUnloadType::Transfer);
+		else if (unload_type == "none") unload_val = static_cast<uint16_t>(OrderUnloadType::NoUnload);
+
+		CommandCost cost = Command<CMD_MODIFY_ORDER>::Do(flags, vid, order_idx, MOF_UNLOAD, unload_val);
+		if (cost.Succeeded()) any_succeeded = true;
+		else any_failed = true;
+	}
+
+	/* Apply non-stop if specified */
+	if (params.contains("non_stop")) {
+		bool non_stop = params["non_stop"].get<bool>();
+		uint16_t ns_val = non_stop ? static_cast<uint16_t>(OrderNonStopFlag::NoIntermediate) : 0;
+
+		CommandCost cost = Command<CMD_MODIFY_ORDER>::Do(flags, vid, order_idx, MOF_NON_STOP, ns_val);
+		if (cost.Succeeded()) any_succeeded = true;
+		else any_failed = true;
+	}
+
+	cur_company.Restore();
+
+	nlohmann::json result;
+	result["vehicle_id"] = vid.base();
+	result["order_index"] = order_idx;
+	result["success"] = any_succeeded && !any_failed;
+	result["partial_success"] = any_succeeded && any_failed;
+
+	if (any_failed && !any_succeeded) {
+		result["error"] = "Failed to modify order flags";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for order.share - Share orders between vehicles.
+ *
+ * Parameters:
+ *   vehicle_id: The vehicle to copy orders TO (required)
+ *   source_vehicle_id: The vehicle to copy orders FROM (required)
+ *   mode: "share" (default), "copy", or "unshare"
+ *
+ * Returns:
+ *   success: Whether the operation succeeded
+ */
+static nlohmann::json HandleOrderShare(const nlohmann::json &params)
+{
+	if (!params.contains("vehicle_id")) {
+		throw std::runtime_error("Missing required parameter: vehicle_id");
+	}
+	if (!params.contains("source_vehicle_id")) {
+		throw std::runtime_error("Missing required parameter: source_vehicle_id");
+	}
+
+	VehicleID dest_vid = static_cast<VehicleID>(params["vehicle_id"].get<int>());
+	VehicleID src_vid = static_cast<VehicleID>(params["source_vehicle_id"].get<int>());
+
+	const Vehicle *dest_v = Vehicle::GetIfValid(dest_vid);
+	const Vehicle *src_v = Vehicle::GetIfValid(src_vid);
+
+	if (dest_v == nullptr || !dest_v->IsPrimaryVehicle()) {
+		throw std::runtime_error("Invalid destination vehicle ID");
+	}
+	if (src_v == nullptr || !src_v->IsPrimaryVehicle()) {
+		throw std::runtime_error("Invalid source vehicle ID");
+	}
+
+	if (dest_v->type != src_v->type) {
+		throw std::runtime_error("Vehicles must be of the same type to share orders");
+	}
+
+	std::string mode = params.value("mode", "share");
+	CloneOptions clone_opt;
+	if (mode == "share") {
+		clone_opt = CO_SHARE;
+	} else if (mode == "copy") {
+		clone_opt = CO_COPY;
+	} else if (mode == "unshare") {
+		clone_opt = CO_UNSHARE;
+	} else {
+		throw std::runtime_error("Invalid mode - must be 'share', 'copy', or 'unshare'");
+	}
+
+	/* Switch to destination vehicle owner's company context */
+	Backup<CompanyID> cur_company(_current_company, dest_v->owner);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+	CommandCost cost = Command<CMD_CLONE_ORDER>::Do(flags, clone_opt, dest_vid, src_vid);
+
+	cur_company.Restore();
+
+	nlohmann::json result;
+	result["vehicle_id"] = dest_vid.base();
+	result["source_vehicle_id"] = src_vid.base();
+	result["mode"] = mode;
+	result["success"] = cost.Succeeded();
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to " + mode + " orders";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for town.performAction - Perform a town action.
+ *
+ * Parameters:
+ *   town_id: The town ID (required)
+ *   action: Action name (required) - one of:
+ *           advertise_small, advertise_medium, advertise_large,
+ *           road_rebuild, build_statue, fund_buildings, buy_rights, bribe
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the action succeeded
+ *   cost: The cost of the action
+ */
+static nlohmann::json HandleTownPerformAction(const nlohmann::json &params)
+{
+	if (!params.contains("town_id")) {
+		throw std::runtime_error("Missing required parameter: town_id");
+	}
+	if (!params.contains("action")) {
+		throw std::runtime_error("Missing required parameter: action");
+	}
+
+	TownID town_id = static_cast<TownID>(params["town_id"].get<int>());
+	const Town *t = Town::GetIfValid(town_id);
+	if (t == nullptr) {
+		throw std::runtime_error("Invalid town ID");
+	}
+
+	std::string action_str = params["action"].get<std::string>();
+	TownAction action;
+
+	if (action_str == "advertise_small") {
+		action = TownAction::AdvertiseSmall;
+	} else if (action_str == "advertise_medium") {
+		action = TownAction::AdvertiseMedium;
+	} else if (action_str == "advertise_large") {
+		action = TownAction::AdvertiseLarge;
+	} else if (action_str == "road_rebuild") {
+		action = TownAction::RoadRebuild;
+	} else if (action_str == "build_statue") {
+		action = TownAction::BuildStatue;
+	} else if (action_str == "fund_buildings") {
+		action = TownAction::FundBuildings;
+	} else if (action_str == "buy_rights") {
+		action = TownAction::BuyRights;
+	} else if (action_str == "bribe") {
+		action = TownAction::Bribe;
+	} else {
+		throw std::runtime_error("Invalid action - must be one of: advertise_small, advertise_medium, advertise_large, road_rebuild, build_statue, fund_buildings, buy_rights, bribe");
+	}
+
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	if (!Company::IsValidID(company)) {
+		throw std::runtime_error("Invalid company ID");
+	}
+
+	/* Switch to company context */
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+	CommandCost cost = Command<CMD_DO_TOWN_ACTION>::Do(flags, town_id, action);
+
+	cur_company.Restore();
+
+	nlohmann::json result;
+	result["town_id"] = town_id.base();
+	result["town_name"] = StrMakeValid(t->GetCachedName());
+	result["action"] = action_str;
+	result["success"] = cost.Succeeded();
+
+	if (cost.Succeeded()) {
+		result["cost"] = cost.GetCost().base();
+	} else {
+		result["error"] = "Failed to perform town action - check town rating and requirements";
+	}
+
+	return result;
+}
+
 void RpcRegisterActionHandlers(RpcServer &server)
 {
 	server.RegisterHandler("vehicle.startstop", HandleVehicleStartStop);
@@ -543,6 +1041,12 @@ void RpcRegisterActionHandlers(RpcServer &server)
 	server.RegisterHandler("vehicle.build", HandleVehicleBuild);
 	server.RegisterHandler("vehicle.sell", HandleVehicleSell);
 	server.RegisterHandler("vehicle.clone", HandleVehicleClone);
+	server.RegisterHandler("vehicle.refit", HandleVehicleRefit);
 	server.RegisterHandler("order.append", HandleOrderAppend);
 	server.RegisterHandler("order.remove", HandleOrderRemove);
+	server.RegisterHandler("order.insert", HandleOrderInsert);
+	server.RegisterHandler("order.setFlags", HandleOrderSetFlags);
+	server.RegisterHandler("order.share", HandleOrderShare);
+	server.RegisterHandler("company.setLoan", HandleCompanySetLoan);
+	server.RegisterHandler("town.performAction", HandleTownPerformAction);
 }

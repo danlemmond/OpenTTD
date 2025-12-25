@@ -19,6 +19,7 @@
  * - Action: Vehicle and order control commands
  * - Infra: Infrastructure building (roads, rails, stations, depots)
  * - Meta: Game control (new game, etc.)
+ * - Viewport: Camera control and activity tracking
  */
 void RpcRegisterHandlers(RpcServer &server)
 {
@@ -26,4 +27,5 @@ void RpcRegisterHandlers(RpcServer &server)
 	RpcRegisterActionHandlers(server);
 	RpcRegisterInfraHandlers(server);
 	RpcRegisterMetaHandlers(server);
+	RpcRegisterViewportHandlers(server);
 }

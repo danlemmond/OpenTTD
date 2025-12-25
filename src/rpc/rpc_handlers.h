@@ -11,6 +11,8 @@
 #define RPC_HANDLERS_H
 
 #include "rpc_server.h"
+#include "../tile_type.h"
+#include <string>
 
 /* Query handlers - rpc_handlers_query.cpp */
 void RpcRegisterQueryHandlers(RpcServer &server);
@@ -23,5 +25,12 @@ void RpcRegisterInfraHandlers(RpcServer &server);
 
 /* Meta handlers - rpc_handlers_meta.cpp */
 void RpcRegisterMetaHandlers(RpcServer &server);
+
+/* Viewport/activity handlers - rpc_handlers_viewport.cpp */
+void RpcRegisterViewportHandlers(RpcServer &server);
+
+/* Activity tracking - call from action handlers to record where changes happen */
+void RpcRecordActivity(TileIndex tile, const std::string &action);
+void RpcRecordActivityXY(uint x, uint y, const std::string &action);
 
 #endif /* RPC_HANDLERS_H */
