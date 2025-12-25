@@ -1,5 +1,10 @@
 add_files(
     rpc_handlers.cpp
+    rpc_handlers.h
+    rpc_handlers_action.cpp
+    rpc_handlers_infra.cpp
+    rpc_handlers_meta.cpp
+    rpc_handlers_query.cpp
     rpc_server.cpp
     rpc_server.h
 )
