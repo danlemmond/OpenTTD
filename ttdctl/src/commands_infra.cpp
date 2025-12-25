@@ -513,3 +513,144 @@ int HandleRailRemoveSignal(RpcClient &client, const CliOptions &opts)
 		return 1;
 	}
 }
+
+int HandleMarineBuildDock(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl marine dock <x> <y> [--station <id>]\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		/* Parse options */
+		for (size_t i = 2; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--station" && i + 1 < opts.args.size()) {
+				params["station_id"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		auto result = client.Call("marine.buildDock", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built dock at tile " << result["tile"].get<int>()
+			          << " (" << result["x"].get<int>() << ", " << result["y"].get<int>() << ")"
+			          << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build dock: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+int HandleMarineBuildDepot(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl marine depot <x> <y> [--axis x|y]\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		/* Parse options */
+		for (size_t i = 2; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--axis" && i + 1 < opts.args.size()) {
+				params["axis"] = opts.args[++i];
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		auto result = client.Call("marine.buildDepot", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built ship depot at tile " << result["tile"].get<int>()
+			          << " axis " << result["axis"].get<std::string>()
+			          << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build ship depot: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+int HandleAirportBuild(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl airport build <x> <y> [--type <type>] [--station <id>]\n";
+			std::cerr << "Airport types: small, large, heliport, metropolitan, international,\n";
+			std::cerr << "               commuter, helidepot, intercontinental, helistation\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		/* Parse options */
+		for (size_t i = 2; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--type" && i + 1 < opts.args.size()) {
+				params["type"] = opts.args[++i];
+			} else if (opts.args[i] == "--layout" && i + 1 < opts.args.size()) {
+				params["layout"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--station" && i + 1 < opts.args.size()) {
+				params["station_id"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		auto result = client.Call("airport.build", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built " << result["type"].get<std::string>() << " airport at tile " << result["tile"].get<int>()
+			          << " (" << result["x"].get<int>() << ", " << result["y"].get<int>() << ")"
+			          << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build airport: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}

@@ -107,6 +107,16 @@ int main(int argc, char *argv[])
 		} else if (opts.action == "remove-signal") {
 			return HandleRailRemoveSignal(client, opts);
 		}
+	} else if (opts.resource == "marine") {
+		if (opts.action == "dock") {
+			return HandleMarineBuildDock(client, opts);
+		} else if (opts.action == "depot") {
+			return HandleMarineBuildDepot(client, opts);
+		}
+	} else if (opts.resource == "airport") {
+		if (opts.action == "build") {
+			return HandleAirportBuild(client, opts);
+		}
 	} else if (opts.resource == "town") {
 		if (opts.action == "list" || opts.action.empty()) {
 			return HandleTownList(client, opts);

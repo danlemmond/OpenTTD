@@ -83,6 +83,9 @@ int HandleRailBuildDepot(RpcClient &client, const CliOptions &opts);
 int HandleRailBuildStation(RpcClient &client, const CliOptions &opts);
 int HandleRailBuildSignal(RpcClient &client, const CliOptions &opts);
 int HandleRailRemoveSignal(RpcClient &client, const CliOptions &opts);
+int HandleMarineBuildDock(RpcClient &client, const CliOptions &opts);
+int HandleMarineBuildDepot(RpcClient &client, const CliOptions &opts);
+int HandleAirportBuild(RpcClient &client, const CliOptions &opts);
 
 /* Vehicle management commands - commands_vehicle.cpp */
 int HandleEngineList(RpcClient &client, const CliOptions &opts);

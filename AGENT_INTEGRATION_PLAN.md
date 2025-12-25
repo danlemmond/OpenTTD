@@ -4,7 +4,7 @@
 
 This document outlines the plan to integrate a Claude Code AI agent terminal into OpenTTD, similar to the RampLabs experiment done with OpenRCT2.
 
-## Status: Phase 3 Complete - Full RPC API + Camera Control
+## Status: Phase 3 Complete - Full RPC API + All Infrastructure Building
 
 Started: 2025-12-25
 Last Updated: 2025-12-25
@@ -463,9 +463,32 @@ Based on analysis of the Script API, here are the handlers needed:
 | `rail.buildDepot` | ✅ | Build train depot | `ScriptRail::BuildRailDepot` |
 | `rail.buildSignal` | ✅ | Build signal (all types) | `CMD_BUILD_SINGLE_SIGNAL` |
 | `rail.removeSignal` | ✅ | Remove signal | `CMD_REMOVE_SINGLE_SIGNAL` |
-| `marine.buildDock` | ❌ | Build dock | `ScriptMarine::BuildDock` |
-| `marine.buildDepot` | ❌ | Build ship depot | `ScriptMarine::BuildWaterDepot` |
-| `airport.build` | ❌ | Build airport | `ScriptAirport::BuildAirport` |
+| `marine.buildDock` | ✅ | Build dock | `CMD_BUILD_DOCK` |
+| `marine.buildDepot` | ✅ | Build ship depot | `CMD_BUILD_SHIP_DEPOT` |
+| `airport.build` | ✅ | Build airport (all types) | `CMD_BUILD_AIRPORT` |
+
+#### Infrastructure Placement Notes
+When searching for valid build locations, these sizes and anchor points apply:
+
+| Structure | Size (WxH) | Anchor | Notes |
+|-----------|------------|--------|-------|
+| Small airport | 3x4 | Top-left | All tiles must be flat, same height |
+| Large airport | 4x5 | Top-left | |
+| Metropolitan | 5x5 | Top-left | |
+| International | 6x6 | Top-left | |
+| Intercontinental | 9x11 | Top-left | |
+| Commuter | 4x4 | Top-left | |
+| Heliport | 1x1 | Single tile | Available from 1963 |
+| Helidepot | 2x2 | Top-left | |
+| Helistation | 2x3 | Top-left | |
+| Ship depot | 1x2 | Left tile | Axis determines orientation (x=horizontal, y=vertical) |
+| Dock | 1x2 | Land tile | Requires sloped coastal tile adjacent to water |
+| Rail station | PxL | Top-left | P=platforms (width), L=length (height) |
+
+To find valid airport locations, scan tile clusters checking that all tiles in the footprint are:
+1. Flat (same height at all corners)
+2. Same height as each other
+3. Clear land (not water, not owned by others)
 
 ### Meta Handlers
 | Method | Status | Description | Script API Reference |
@@ -989,11 +1012,7 @@ For streaming support, added activity tracking and camera control:
 ### Not Yet Implemented
 
 #### RPC Handlers Remaining
-| Handler | Priority | Description |
-|---------|----------|-------------|
-| `marine.buildDock` | Medium | Build ship dock |
-| `marine.buildDepot` | Medium | Build ship depot |
-| `airport.build` | Medium | Build airport |
+All infrastructure building handlers are now complete!
 
 #### Phase 4: Terminal Window - NOT STARTED
 - [ ] ShellProcess (PTY abstraction)

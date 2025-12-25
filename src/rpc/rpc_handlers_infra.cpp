@@ -21,6 +21,8 @@
 #include "../rail_map.h"
 #include "../signal_type.h"
 #include "../direction_func.h"
+#include "../water_cmd.h"
+#include "../airport.h"
 #include "../newgrf_station.h"
 #include "../newgrf_roadstop.h"
 #include "../strings_func.h"
@@ -893,6 +895,276 @@ static nlohmann::json HandleRailRemoveSignal(const nlohmann::json &params)
 	return result;
 }
 
+/**
+ * Handler for marine.buildDock - Build a ship dock.
+ *
+ * Parameters:
+ *   tile: Tile index (optional if x,y provided)
+ *   x, y: Tile coordinates (optional if tile provided)
+ *   station_id: Station to join (optional, creates new if not specified)
+ *   adjacent: Allow adjacent station joining (default: true)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the dock was built
+ *   tile: The tile where dock was built
+ *   cost: The cost of building the dock
+ */
+static nlohmann::json HandleMarineBuildDock(const nlohmann::json &params)
+{
+	/* Get tile */
+	TileIndex tile;
+	if (params.contains("tile")) {
+		tile = static_cast<TileIndex>(params["tile"].get<uint32_t>());
+	} else if (params.contains("x") && params.contains("y")) {
+		uint x = params["x"].get<uint>();
+		uint y = params["y"].get<uint>();
+		if (x >= Map::SizeX() || y >= Map::SizeY()) {
+			throw std::runtime_error("Coordinates out of bounds");
+		}
+		tile = TileXY(x, y);
+	} else {
+		throw std::runtime_error("Missing required parameter: tile or x/y");
+	}
+
+	/* Station to join */
+	StationID station_to_join = StationID::Invalid();
+	if (params.contains("station_id")) {
+		station_to_join = static_cast<StationID>(params["station_id"].get<int>());
+	}
+
+	/* Adjacent joining */
+	bool adjacent = params.value("adjacent", true);
+
+	/* Set company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	CommandCost cost = Command<CMD_BUILD_DOCK>::Do(flags, tile, station_to_join, adjacent);
+
+	cur_company.Restore();
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(tile, "marine.buildDock");
+	}
+
+	nlohmann::json result;
+	result["tile"] = tile.base();
+	result["x"] = TileX(tile);
+	result["y"] = TileY(tile);
+	result["success"] = cost.Succeeded();
+	result["cost"] = cost.GetCost().base();
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to build dock - check tile has water access and correct slope";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for marine.buildDepot - Build a ship depot.
+ *
+ * Parameters:
+ *   tile: Tile index (optional if x,y provided)
+ *   x, y: Tile coordinates (optional if tile provided)
+ *   axis: Depot axis orientation (x or y)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the depot was built
+ *   tile: The tile where depot was built
+ *   axis: The axis orientation
+ *   cost: The cost of building the depot
+ */
+static nlohmann::json HandleMarineBuildDepot(const nlohmann::json &params)
+{
+	/* Get tile */
+	TileIndex tile;
+	if (params.contains("tile")) {
+		tile = static_cast<TileIndex>(params["tile"].get<uint32_t>());
+	} else if (params.contains("x") && params.contains("y")) {
+		uint x = params["x"].get<uint>();
+		uint y = params["y"].get<uint>();
+		if (x >= Map::SizeX() || y >= Map::SizeY()) {
+			throw std::runtime_error("Coordinates out of bounds");
+		}
+		tile = TileXY(x, y);
+	} else {
+		throw std::runtime_error("Missing required parameter: tile or x/y");
+	}
+
+	/* Get axis */
+	Axis axis = AXIS_X;
+	if (params.contains("axis")) {
+		std::string axis_str = params["axis"].get<std::string>();
+		if (axis_str == "x") {
+			axis = AXIS_X;
+		} else if (axis_str == "y") {
+			axis = AXIS_Y;
+		} else {
+			throw std::runtime_error("Invalid axis: use x or y");
+		}
+	}
+
+	/* Set company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	CommandCost cost = Command<CMD_BUILD_SHIP_DEPOT>::Do(flags, tile, axis);
+
+	cur_company.Restore();
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(tile, "marine.buildDepot");
+	}
+
+	nlohmann::json result;
+	result["tile"] = tile.base();
+	result["x"] = TileX(tile);
+	result["y"] = TileY(tile);
+	result["axis"] = (axis == AXIS_X) ? "x" : "y";
+	result["success"] = cost.Succeeded();
+	result["cost"] = cost.GetCost().base();
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to build ship depot - check tile is flat water";
+	}
+
+	return result;
+}
+
+/**
+ * Parse an airport type string or number to AirportTypes enum.
+ */
+static uint8_t ParseAirportType(const nlohmann::json &value)
+{
+	if (value.is_number()) {
+		return value.get<uint8_t>();
+	}
+
+	std::string str = value.get<std::string>();
+	if (str == "small") return AT_SMALL;
+	if (str == "large" || str == "city") return AT_LARGE;
+	if (str == "heliport") return AT_HELIPORT;
+	if (str == "metropolitan" || str == "metro") return AT_METROPOLITAN;
+	if (str == "international" || str == "intl") return AT_INTERNATIONAL;
+	if (str == "commuter") return AT_COMMUTER;
+	if (str == "helidepot") return AT_HELIDEPOT;
+	if (str == "intercontinental" || str == "intercon") return AT_INTERCON;
+	if (str == "helistation") return AT_HELISTATION;
+
+	throw std::runtime_error("Invalid airport type: use small, large, heliport, metropolitan, international, commuter, helidepot, intercontinental, or helistation");
+}
+
+/**
+ * Get airport type name as string.
+ */
+static const char *AirportTypeToString(uint8_t type)
+{
+	switch (type) {
+		case AT_SMALL: return "small";
+		case AT_LARGE: return "large";
+		case AT_HELIPORT: return "heliport";
+		case AT_METROPOLITAN: return "metropolitan";
+		case AT_INTERNATIONAL: return "international";
+		case AT_COMMUTER: return "commuter";
+		case AT_HELIDEPOT: return "helidepot";
+		case AT_INTERCON: return "intercontinental";
+		case AT_HELISTATION: return "helistation";
+		default: return "unknown";
+	}
+}
+
+/**
+ * Handler for airport.build - Build an airport.
+ *
+ * Parameters:
+ *   tile: Tile index (optional if x,y provided)
+ *   x, y: Tile coordinates - northwest corner (optional if tile provided)
+ *   type: Airport type (small, large, heliport, metropolitan, international, commuter, helidepot, intercontinental, helistation)
+ *   layout: Airport layout variant (default: 0)
+ *   station_id: Station to join (optional, creates new if not specified)
+ *   adjacent: Allow adjacent station joining (default: true)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the airport was built
+ *   tile: The tile where airport was built
+ *   type: The airport type
+ *   cost: The cost of building the airport
+ */
+static nlohmann::json HandleAirportBuild(const nlohmann::json &params)
+{
+	/* Get tile */
+	TileIndex tile;
+	if (params.contains("tile")) {
+		tile = static_cast<TileIndex>(params["tile"].get<uint32_t>());
+	} else if (params.contains("x") && params.contains("y")) {
+		uint x = params["x"].get<uint>();
+		uint y = params["y"].get<uint>();
+		if (x >= Map::SizeX() || y >= Map::SizeY()) {
+			throw std::runtime_error("Coordinates out of bounds");
+		}
+		tile = TileXY(x, y);
+	} else {
+		throw std::runtime_error("Missing required parameter: tile or x/y");
+	}
+
+	/* Get airport type - default to small */
+	uint8_t airport_type = AT_SMALL;
+	if (params.contains("type")) {
+		airport_type = ParseAirportType(params["type"]);
+	}
+
+	/* Layout variant */
+	uint8_t layout = params.value("layout", 0);
+
+	/* Station to join */
+	StationID station_to_join = StationID::Invalid();
+	if (params.contains("station_id")) {
+		station_to_join = static_cast<StationID>(params["station_id"].get<int>());
+	}
+
+	/* Adjacent joining */
+	bool adjacent = params.value("adjacent", true);
+
+	/* Set company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	CommandCost cost = Command<CMD_BUILD_AIRPORT>::Do(flags, tile, airport_type, layout, station_to_join, adjacent);
+
+	cur_company.Restore();
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(tile, "airport.build");
+	}
+
+	nlohmann::json result;
+	result["tile"] = tile.base();
+	result["x"] = TileX(tile);
+	result["y"] = TileY(tile);
+	result["type"] = AirportTypeToString(airport_type);
+	result["success"] = cost.Succeeded();
+	result["cost"] = cost.GetCost().base();
+
+	if (cost.Failed()) {
+		result["error"] = "Failed to build airport - check tile is flat land with enough space";
+	}
+
+	return result;
+}
+
 void RpcRegisterInfraHandlers(RpcServer &server)
 {
 	server.RegisterHandler("tile.getRoadInfo", HandleTileGetRoadInfo);
@@ -904,4 +1176,7 @@ void RpcRegisterInfraHandlers(RpcServer &server)
 	server.RegisterHandler("rail.buildStation", HandleRailBuildStation);
 	server.RegisterHandler("rail.buildSignal", HandleRailBuildSignal);
 	server.RegisterHandler("rail.removeSignal", HandleRailRemoveSignal);
+	server.RegisterHandler("marine.buildDock", HandleMarineBuildDock);
+	server.RegisterHandler("marine.buildDepot", HandleMarineBuildDepot);
+	server.RegisterHandler("airport.build", HandleAirportBuild);
 }

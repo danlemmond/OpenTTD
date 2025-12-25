@@ -67,6 +67,9 @@ void PrintUsage()
 	std::cout << "  rail station        Build a train station\n";
 	std::cout << "  rail signal         Build rail signal (block, entry, exit, combo, pbs, pbs_oneway)\n";
 	std::cout << "  rail remove-signal  Remove rail signal\n";
+	std::cout << "  marine dock         Build a ship dock\n";
+	std::cout << "  marine depot        Build a ship depot\n";
+	std::cout << "  airport build       Build an airport\n";
 	std::cout << "\nMeta Commands:\n";
 	std::cout << "  game newgame        Start a new game with default settings\n";
 	std::cout << "\nCamera/Viewport Control:\n";
@@ -127,6 +130,10 @@ void PrintUsage()
 	std::cout << "  ttdctl rail signal 50 50 --track x --type pbs --two-way\n";
 	std::cout << "  ttdctl rail signal 50 50 --track y --type entry --variant semaphore\n";
 	std::cout << "  ttdctl rail remove-signal 50 50 --track x  # Remove signal\n";
+	std::cout << "  ttdctl marine dock 50 50                 # Build dock at sloped coastal tile\n";
+	std::cout << "  ttdctl marine depot 60 60 --axis x       # Build ship depot on water\n";
+	std::cout << "  ttdctl airport build 100 100 --type small  # Build small airport\n";
+	std::cout << "  ttdctl airport build 100 100 --type international  # Build international airport\n";
 	std::cout << "\n  # Camera/Viewport Control:\n";
 	std::cout << "  ttdctl viewport goto 100 100            # Scroll to coordinates\n";
 	std::cout << "  ttdctl viewport goto 100 100 --instant  # Jump instantly\n";
