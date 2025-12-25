@@ -14,6 +14,7 @@
 #include "../timer/timer_game_calendar.h"
 #include "../timer/timer_game_economy.h"
 #include "../vehicle_base.h"
+#include "../vehicle_func.h"
 #include "../roadveh.h"
 #include "../station_base.h"
 #include "../industry.h"
@@ -28,6 +29,7 @@
 #include "../table/strings.h"
 #include "../order_base.h"
 #include "../command_func.h"
+#include "../core/backup_type.hpp"
 #include "../vehicle_cmd.h"
 #include "../order_cmd.h"
 
@@ -918,10 +920,15 @@ static nlohmann::json HandleVehicleStartStop(const nlohmann::json &params)
 		throw std::runtime_error("Invalid vehicle ID");
 	}
 
+	/* Switch to vehicle owner's company context */
+	Backup<CompanyID> cur_company(_current_company, v->owner);
+
 	/* Execute the start/stop command */
 	DoCommandFlags flags;
 	flags.Set(DoCommandFlag::Execute);
 	CommandCost cost = Command<CMD_START_STOP_VEHICLE>::Do(flags, vid, false);
+
+	cur_company.Restore();
 
 	nlohmann::json result;
 	result["vehicle_id"] = vid.base();
@@ -952,6 +959,9 @@ static nlohmann::json HandleVehicleSendToDepot(const nlohmann::json &params)
 		throw std::runtime_error("Invalid vehicle ID");
 	}
 
+	/* Switch to vehicle owner's company context */
+	Backup<CompanyID> cur_company(_current_company, v->owner);
+
 	/* Check options */
 	bool service_only = params.value("service", false);
 
@@ -966,6 +976,8 @@ static nlohmann::json HandleVehicleSendToDepot(const nlohmann::json &params)
 	DoCommandFlags flags;
 	flags.Set(DoCommandFlag::Execute);
 	CommandCost cost = Command<CMD_SEND_VEHICLE_TO_DEPOT>::Do(flags, vid, depot_flags, vli);
+
+	cur_company.Restore();
 
 	nlohmann::json result;
 	result["vehicle_id"] = vid.base();
@@ -991,6 +1003,9 @@ static nlohmann::json HandleVehicleTurnAround(const nlohmann::json &params)
 		throw std::runtime_error("Invalid vehicle ID");
 	}
 
+	/* Switch to vehicle owner's company context */
+	Backup<CompanyID> cur_company(_current_company, v->owner);
+
 	/* Cancel depot order by sending to depot with no flags, then immediately canceling */
 	DepotCommandFlags depot_flags;
 
@@ -1001,6 +1016,8 @@ static nlohmann::json HandleVehicleTurnAround(const nlohmann::json &params)
 
 	/* Sending a vehicle to depot while already heading there cancels the depot order */
 	CommandCost cost = Command<CMD_SEND_VEHICLE_TO_DEPOT>::Do(flags, vid, depot_flags, vli);
+
+	cur_company.Restore();
 
 	nlohmann::json result;
 	result["vehicle_id"] = vid.base();
@@ -1031,9 +1048,18 @@ static nlohmann::json HandleOrderAppend(const nlohmann::json &params)
 		throw std::runtime_error("Invalid destination station ID");
 	}
 
+	/* Check if vehicle can use this station */
+	if (!CanVehicleUseStation(v, st)) {
+		throw std::runtime_error("Vehicle cannot use this station (incompatible facilities or road type)");
+	}
+
+	/* Switch to vehicle owner's company context */
+	Backup<CompanyID> cur_company(_current_company, v->owner);
+
 	/* Build the order */
 	Order order;
 	order.MakeGoToStation(dest_station);
+	order.SetStopLocation(OrderStopLocation::FarEnd);  /* Required for non-train vehicles */
 
 	/* Set load/unload flags if specified */
 	std::string load_type = params.value("load", "default");
@@ -1068,6 +1094,8 @@ static nlohmann::json HandleOrderAppend(const nlohmann::json &params)
 	DoCommandFlags flags;
 	flags.Set(DoCommandFlag::Execute);
 	CommandCost cost = Command<CMD_INSERT_ORDER>::Do(flags, vid, insert_pos, order);
+
+	cur_company.Restore();
 
 	nlohmann::json result;
 	result["vehicle_id"] = vid.base();
@@ -1104,9 +1132,14 @@ static nlohmann::json HandleOrderRemove(const nlohmann::json &params)
 		throw std::runtime_error("Invalid order index");
 	}
 
+	/* Switch to vehicle owner's company context */
+	Backup<CompanyID> cur_company(_current_company, v->owner);
+
 	DoCommandFlags flags;
 	flags.Set(DoCommandFlag::Execute);
 	CommandCost cost = Command<CMD_DELETE_ORDER>::Do(flags, vid, order_idx);
+
+	cur_company.Restore();
 
 	nlohmann::json result;
 	result["vehicle_id"] = vid.base();

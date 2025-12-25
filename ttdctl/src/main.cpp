@@ -106,6 +106,9 @@ static CliOptions ParseArgs(int argc, char *argv[])
 			} else {
 				opts.args.push_back(arg);
 			}
+		} else if (!opts.action.empty()) {
+			/* Pass through unknown options to subcommand after action is set */
+			opts.args.push_back(arg);
 		}
 	}
 
@@ -931,17 +934,17 @@ static int HandleOrderAppend(RpcClient &client, const CliOptions &opts)
 		/* Parse --station, --load, --unload, --non-stop from args */
 		for (size_t i = 1; i < opts.args.size(); ++i) {
 			if (opts.args[i] == "--station" && i + 1 < opts.args.size()) {
-				params["station_id"] = std::stoi(opts.args[++i]);
+				params["destination"] = std::stoi(opts.args[++i]);
 			} else if (opts.args[i] == "--load" && i + 1 < opts.args.size()) {
-				params["load_type"] = opts.args[++i];
+				params["load"] = opts.args[++i];
 			} else if (opts.args[i] == "--unload" && i + 1 < opts.args.size()) {
-				params["unload_type"] = opts.args[++i];
+				params["unload"] = opts.args[++i];
 			} else if (opts.args[i] == "--non-stop") {
 				params["non_stop"] = true;
 			}
 		}
 
-		if (!params.contains("station_id")) {
+		if (!params.contains("destination")) {
 			std::cerr << "Error: --station is required\n";
 			std::cerr << "Usage: ttdctl order append <vehicle_id> --station <id> [--load TYPE] [--unload TYPE] [--non-stop]\n";
 			return 1;
