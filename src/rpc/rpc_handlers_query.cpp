@@ -31,6 +31,13 @@
 #include "../engine_base.h"
 #include "../engine_func.h"
 #include "../articulated_vehicles.h"
+#include "../subsidy_base.h"
+#include "../economy_func.h"
+#include "../cargomonitor.h"
+#include "../airport.h"
+#include "../newgrf_airport.h"
+#include "../station_map.h"
+#include "../linkgraph/linkgraph_base.h"
 
 #include "../safeguards.h"
 
@@ -1091,6 +1098,597 @@ static nlohmann::json HandleEngineGet(const nlohmann::json &params)
 	return result;
 }
 
+/**
+ * Handler for subsidy.list - List all available and awarded subsidies.
+ *
+ * Returns array of subsidies with source, destination, cargo, and expiry info.
+ */
+static nlohmann::json HandleSubsidyList([[maybe_unused]] const nlohmann::json &params)
+{
+	nlohmann::json result = nlohmann::json::array();
+
+	for (const Subsidy *s : Subsidy::Iterate()) {
+		if (!IsValidCargoType(s->cargo_type)) continue;
+
+		nlohmann::json subsidy_json;
+		subsidy_json["id"] = s->index.base();
+		subsidy_json["remaining_months"] = s->remaining;
+		subsidy_json["is_awarded"] = s->IsAwarded();
+
+		if (s->IsAwarded()) {
+			subsidy_json["awarded_to"] = s->awarded.base();
+		}
+
+		/* Cargo info */
+		const CargoSpec *cs = CargoSpec::Get(s->cargo_type);
+		if (cs != nullptr && cs->IsValid()) {
+			subsidy_json["cargo_type"] = s->cargo_type;
+			subsidy_json["cargo_name"] = StrMakeValid(GetString(cs->name));
+		}
+
+		/* Source info */
+		nlohmann::json source_json;
+		if (s->src.type == SourceType::Industry) {
+			source_json["type"] = "industry";
+			source_json["id"] = s->src.id;
+			const Industry *ind = Industry::GetIfValid(s->src.ToIndustryID());
+			if (ind != nullptr) {
+				source_json["name"] = StrMakeValid(GetString(STR_INDUSTRY_NAME, ind->index));
+				source_json["location"] = {{"x", TileX(ind->location.tile)}, {"y", TileY(ind->location.tile)}};
+			}
+		} else if (s->src.type == SourceType::Town) {
+			source_json["type"] = "town";
+			source_json["id"] = s->src.id;
+			const Town *t = Town::GetIfValid(s->src.ToTownID());
+			if (t != nullptr) {
+				source_json["name"] = StrMakeValid(GetString(STR_TOWN_NAME, t->index));
+				source_json["location"] = {{"x", TileX(t->xy)}, {"y", TileY(t->xy)}};
+			}
+		}
+		subsidy_json["source"] = source_json;
+
+		/* Destination info */
+		nlohmann::json dest_json;
+		if (s->dst.type == SourceType::Industry) {
+			dest_json["type"] = "industry";
+			dest_json["id"] = s->dst.id;
+			const Industry *ind = Industry::GetIfValid(s->dst.ToIndustryID());
+			if (ind != nullptr) {
+				dest_json["name"] = StrMakeValid(GetString(STR_INDUSTRY_NAME, ind->index));
+				dest_json["location"] = {{"x", TileX(ind->location.tile)}, {"y", TileY(ind->location.tile)}};
+			}
+		} else if (s->dst.type == SourceType::Town) {
+			dest_json["type"] = "town";
+			dest_json["id"] = s->dst.id;
+			const Town *t = Town::GetIfValid(s->dst.ToTownID());
+			if (t != nullptr) {
+				dest_json["name"] = StrMakeValid(GetString(STR_TOWN_NAME, t->index));
+				dest_json["location"] = {{"x", TileX(t->xy)}, {"y", TileY(t->xy)}};
+			}
+		}
+		subsidy_json["destination"] = dest_json;
+
+		result.push_back(subsidy_json);
+	}
+
+	return result;
+}
+
+/**
+ * Handler for cargo.list - List all cargo types with their properties.
+ */
+static nlohmann::json HandleCargoList([[maybe_unused]] const nlohmann::json &params)
+{
+	nlohmann::json result = nlohmann::json::array();
+
+	for (const CargoSpec *cs : CargoSpec::Iterate()) {
+		if (!cs->IsValid()) continue;
+
+		nlohmann::json cargo_json;
+		cargo_json["id"] = cs->Index();
+		cargo_json["name"] = StrMakeValid(GetString(cs->name));
+		cargo_json["is_freight"] = cs->is_freight;
+
+		/* Cargo label (4-char code like PASS, COAL) */
+		std::string label;
+		for (uint i = 0; i < sizeof(cs->label); i++) {
+			label.push_back(GB(cs->label.base(), (sizeof(cs->label) - i - 1) * 8, 8));
+		}
+		cargo_json["label"] = label;
+
+		/* Town effect */
+		const char *effect = "none";
+		switch (cs->town_acceptance_effect) {
+			case TAE_PASSENGERS: effect = "passengers"; break;
+			case TAE_MAIL: effect = "mail"; break;
+			case TAE_GOODS: effect = "goods"; break;
+			case TAE_WATER: effect = "water"; break;
+			case TAE_FOOD: effect = "food"; break;
+			default: break;
+		}
+		cargo_json["town_effect"] = effect;
+
+		result.push_back(cargo_json);
+	}
+
+	return result;
+}
+
+/**
+ * Handler for cargo.getIncome - Calculate revenue for transporting cargo.
+ *
+ * Parameters:
+ *   cargo_type: Cargo type ID (required)
+ *   distance: Manhattan distance in tiles (required)
+ *   days_in_transit: Days the cargo is in transit (required)
+ *   amount: Number of cargo units (default: 1)
+ *
+ * Returns the income in pounds.
+ */
+static nlohmann::json HandleCargoGetIncome(const nlohmann::json &params)
+{
+	if (!params.contains("cargo_type") || !params.contains("distance") || !params.contains("days_in_transit")) {
+		throw std::runtime_error("Missing required parameters: cargo_type, distance, days_in_transit");
+	}
+
+	CargoType cargo_type = params["cargo_type"].get<int>();
+	if (cargo_type >= NUM_CARGO || !CargoSpec::Get(cargo_type)->IsValid()) {
+		throw std::runtime_error("Invalid cargo type");
+	}
+
+	uint32_t distance = params["distance"].get<uint32_t>();
+	uint16_t days_in_transit = params["days_in_transit"].get<uint16_t>();
+	uint32_t amount = params.value("amount", 1);
+
+	/* Convert days to the internal format (ticks_in_transit is days * 2 / 5 internally) */
+	uint16_t ticks = std::min<uint16_t>(days_in_transit * 2 / 5, UINT16_MAX);
+
+	Money income = GetTransportedGoodsIncome(amount, distance, ticks, cargo_type);
+
+	nlohmann::json result;
+	result["cargo_type"] = cargo_type;
+	result["distance"] = distance;
+	result["days_in_transit"] = days_in_transit;
+	result["amount"] = amount;
+	result["income"] = income.base();
+
+	return result;
+}
+
+/**
+ * Handler for cargomonitor.getDelivery - Get/start monitoring cargo deliveries.
+ *
+ * Parameters:
+ *   company: Company ID (required)
+ *   cargo_type: Cargo type (required)
+ *   industry_id: Industry ID (required if monitoring industry)
+ *   town_id: Town ID (required if monitoring town)
+ *   keep_monitoring: Continue monitoring after this call (default: true)
+ *
+ * Returns the amount delivered since last query.
+ */
+static nlohmann::json HandleCargoMonitorGetDelivery(const nlohmann::json &params)
+{
+	if (!params.contains("company") || !params.contains("cargo_type")) {
+		throw std::runtime_error("Missing required parameters: company, cargo_type");
+	}
+	if (!params.contains("industry_id") && !params.contains("town_id")) {
+		throw std::runtime_error("Missing required parameter: industry_id or town_id");
+	}
+
+	CompanyID company = static_cast<CompanyID>(params["company"].get<int>());
+	CargoType cargo = params["cargo_type"].get<int>();
+	bool keep_monitoring = params.value("keep_monitoring", true);
+
+	CargoMonitorID monitor;
+	nlohmann::json result;
+
+	if (params.contains("industry_id")) {
+		IndustryID ind = static_cast<IndustryID>(params["industry_id"].get<int>());
+		if (!Industry::IsValidID(ind)) {
+			throw std::runtime_error("Invalid industry ID");
+		}
+		monitor = EncodeCargoIndustryMonitor(company, cargo, ind);
+		result["industry_id"] = ind.base();
+	} else {
+		TownID town = static_cast<TownID>(params["town_id"].get<int>());
+		if (!Town::IsValidID(town)) {
+			throw std::runtime_error("Invalid town ID");
+		}
+		monitor = EncodeCargoTownMonitor(company, cargo, town);
+		result["town_id"] = town.base();
+	}
+
+	int32_t amount = GetDeliveryAmount(monitor, keep_monitoring);
+
+	result["company"] = company.base();
+	result["cargo_type"] = cargo;
+	result["amount"] = amount;
+	result["keep_monitoring"] = keep_monitoring;
+
+	return result;
+}
+
+/**
+ * Handler for cargomonitor.getPickup - Get/start monitoring cargo pickups.
+ *
+ * Parameters same as cargomonitor.getDelivery
+ */
+static nlohmann::json HandleCargoMonitorGetPickup(const nlohmann::json &params)
+{
+	if (!params.contains("company") || !params.contains("cargo_type")) {
+		throw std::runtime_error("Missing required parameters: company, cargo_type");
+	}
+	if (!params.contains("industry_id") && !params.contains("town_id")) {
+		throw std::runtime_error("Missing required parameter: industry_id or town_id");
+	}
+
+	CompanyID company = static_cast<CompanyID>(params["company"].get<int>());
+	CargoType cargo = params["cargo_type"].get<int>();
+	bool keep_monitoring = params.value("keep_monitoring", true);
+
+	CargoMonitorID monitor;
+	nlohmann::json result;
+
+	if (params.contains("industry_id")) {
+		IndustryID ind = static_cast<IndustryID>(params["industry_id"].get<int>());
+		if (!Industry::IsValidID(ind)) {
+			throw std::runtime_error("Invalid industry ID");
+		}
+		monitor = EncodeCargoIndustryMonitor(company, cargo, ind);
+		result["industry_id"] = ind.base();
+	} else {
+		TownID town = static_cast<TownID>(params["town_id"].get<int>());
+		if (!Town::IsValidID(town)) {
+			throw std::runtime_error("Invalid town ID");
+		}
+		monitor = EncodeCargoTownMonitor(company, cargo, town);
+		result["town_id"] = town.base();
+	}
+
+	int32_t amount = GetPickupAmount(monitor, keep_monitoring);
+
+	result["company"] = company.base();
+	result["cargo_type"] = cargo;
+	result["amount"] = amount;
+	result["keep_monitoring"] = keep_monitoring;
+
+	return result;
+}
+
+/**
+ * Handler for industry.getStockpile - Get cargo stockpiled at an industry.
+ *
+ * Parameters:
+ *   id: Industry ID (required)
+ *
+ * Returns stockpiled cargo amounts for each accepted cargo type.
+ */
+static nlohmann::json HandleIndustryGetStockpile(const nlohmann::json &params)
+{
+	if (!params.contains("id")) {
+		throw std::runtime_error("Missing required parameter: id");
+	}
+
+	IndustryID iid = static_cast<IndustryID>(params["id"].get<int>());
+	const Industry *ind = Industry::GetIfValid(iid);
+	if (ind == nullptr) {
+		throw std::runtime_error("Invalid industry ID");
+	}
+
+	nlohmann::json result;
+	result["id"] = ind->index.base();
+	result["name"] = StrMakeValid(GetString(STR_INDUSTRY_NAME, ind->index));
+
+	nlohmann::json stockpile = nlohmann::json::array();
+	for (const auto &a : ind->accepted) {
+		if (!IsValidCargoType(a.cargo)) continue;
+		const CargoSpec *cs = CargoSpec::Get(a.cargo);
+		if (!cs->IsValid()) continue;
+
+		nlohmann::json cargo_json;
+		cargo_json["cargo_id"] = a.cargo;
+		cargo_json["cargo_name"] = StrMakeValid(GetString(cs->name));
+		cargo_json["stockpiled"] = a.waiting;
+		stockpile.push_back(cargo_json);
+	}
+	result["stockpile"] = stockpile;
+
+	return result;
+}
+
+/**
+ * Handler for industry.getAcceptance - Check cargo acceptance state for an industry.
+ *
+ * Parameters:
+ *   id: Industry ID (required)
+ *   cargo_type: Optional cargo type to check (if omitted, returns all)
+ *
+ * Returns acceptance state: "accepted", "refused", or "not_accepted"
+ */
+static nlohmann::json HandleIndustryGetAcceptance(const nlohmann::json &params)
+{
+	if (!params.contains("id")) {
+		throw std::runtime_error("Missing required parameter: id");
+	}
+
+	IndustryID iid = static_cast<IndustryID>(params["id"].get<int>());
+	const Industry *ind = Industry::GetIfValid(iid);
+	if (ind == nullptr) {
+		throw std::runtime_error("Invalid industry ID");
+	}
+
+	nlohmann::json result;
+	result["id"] = ind->index.base();
+	result["name"] = StrMakeValid(GetString(STR_INDUSTRY_NAME, ind->index));
+
+	auto get_acceptance_state = [&ind](CargoType cargo) -> const char* {
+		for (const auto &a : ind->accepted) {
+			if (a.cargo == cargo) {
+				/* Check if industry is currently accepting */
+				if (IsValidCargoType(a.cargo)) {
+					/* Industries that are "waiting" have waiting > 0 which means they're processing */
+					/* For now, just check if it's in the accepted list */
+					return "accepted";
+				}
+			}
+		}
+		return "not_accepted";
+	};
+
+	if (params.contains("cargo_type")) {
+		CargoType cargo = params["cargo_type"].get<int>();
+		if (cargo >= NUM_CARGO) {
+			throw std::runtime_error("Invalid cargo type");
+		}
+		result["cargo_type"] = cargo;
+		result["state"] = get_acceptance_state(cargo);
+	} else {
+		nlohmann::json acceptance = nlohmann::json::array();
+		for (const auto &a : ind->accepted) {
+			if (!IsValidCargoType(a.cargo)) continue;
+			const CargoSpec *cs = CargoSpec::Get(a.cargo);
+			if (!cs->IsValid()) continue;
+
+			nlohmann::json cargo_json;
+			cargo_json["cargo_id"] = a.cargo;
+			cargo_json["cargo_name"] = StrMakeValid(GetString(cs->name));
+			cargo_json["state"] = "accepted";
+			acceptance.push_back(cargo_json);
+		}
+		result["acceptance"] = acceptance;
+	}
+
+	return result;
+}
+
+/**
+ * Handler for station.getCargoPlanned - Get planned cargo flow through a station.
+ *
+ * Parameters:
+ *   id: Station ID (required)
+ *   cargo_type: Optional cargo type filter
+ *
+ * Returns planned monthly cargo flow per cargo type.
+ */
+static nlohmann::json HandleStationGetCargoPlanned(const nlohmann::json &params)
+{
+	if (!params.contains("id")) {
+		throw std::runtime_error("Missing required parameter: id");
+	}
+
+	StationID sid = static_cast<StationID>(params["id"].get<int>());
+	const Station *st = Station::GetIfValid(sid);
+	if (st == nullptr) {
+		throw std::runtime_error("Invalid station ID");
+	}
+
+	nlohmann::json result;
+	result["id"] = st->index.base();
+	result["name"] = StrMakeValid(st->GetCachedName());
+
+	nlohmann::json planned = nlohmann::json::array();
+
+	CargoType filter_cargo = INVALID_CARGO;
+	if (params.contains("cargo_type")) {
+		filter_cargo = params["cargo_type"].get<int>();
+	}
+
+	for (CargoType c = 0; c < NUM_CARGO; c++) {
+		if (filter_cargo != INVALID_CARGO && c != filter_cargo) continue;
+
+		const GoodsEntry &ge = st->goods[c];
+		if (!ge.HasRating() && ge.TotalCount() == 0) continue;
+
+		const CargoSpec *cs = CargoSpec::Get(c);
+		if (!cs->IsValid()) continue;
+
+		/* Get link graph capacity/usage data */
+		uint total_capacity = 0;
+		uint total_usage = 0;
+		if (ge.link_graph != LinkGraphID::Invalid() && ge.node != INVALID_NODE) {
+			const LinkGraph *lg = LinkGraph::GetIfValid(ge.link_graph);
+			if (lg != nullptr && ge.node < lg->Size()) {
+				/* Sum outgoing edge capacities */
+				for (auto &edge : (*lg)[ge.node].edges) {
+					total_capacity += edge.capacity;
+					total_usage += edge.usage;
+				}
+			}
+		}
+
+		nlohmann::json cargo_json;
+		cargo_json["cargo_id"] = c;
+		cargo_json["cargo_name"] = StrMakeValid(GetString(cs->name));
+		cargo_json["waiting"] = ge.TotalCount();
+		cargo_json["rating"] = ge.HasRating() ? ge.rating * 100 / 255 : -1;
+		cargo_json["link_capacity"] = total_capacity;
+		cargo_json["link_usage"] = total_usage;
+		planned.push_back(cargo_json);
+	}
+	result["cargo"] = planned;
+
+	return result;
+}
+
+/**
+ * Handler for vehicle.getCargoByType - Get detailed cargo breakdown for a vehicle.
+ *
+ * Parameters:
+ *   id: Vehicle ID (required)
+ *
+ * Returns cargo load and capacity for each cargo type the vehicle can carry.
+ */
+static nlohmann::json HandleVehicleGetCargoByType(const nlohmann::json &params)
+{
+	if (!params.contains("id")) {
+		throw std::runtime_error("Missing required parameter: id");
+	}
+
+	VehicleID vid = static_cast<VehicleID>(params["id"].get<int>());
+	const Vehicle *v = Vehicle::GetIfValid(vid);
+	if (v == nullptr) {
+		throw std::runtime_error("Invalid vehicle ID");
+	}
+
+	nlohmann::json result;
+	result["id"] = v->index.base();
+	result["name"] = StrMakeValid(GetString(STR_VEHICLE_NAME, v->index));
+	result["type"] = VehicleTypeToString(v->type);
+
+	/* Aggregate cargo across all parts of the vehicle */
+	std::map<CargoType, std::pair<uint, uint>> cargo_data;  /* cargo -> (loaded, capacity) */
+
+	for (const Vehicle *u = v; u != nullptr; u = u->Next()) {
+		if (u->cargo_cap > 0 && IsValidCargoType(u->cargo_type)) {
+			auto &data = cargo_data[u->cargo_type];
+			data.first += u->cargo.StoredCount();
+			data.second += u->cargo_cap;
+		}
+	}
+
+	nlohmann::json cargo_list = nlohmann::json::array();
+	for (const auto &pair : cargo_data) {
+		CargoType ct = pair.first;
+		const CargoSpec *cs = CargoSpec::Get(ct);
+		if (cs == nullptr || !cs->IsValid()) continue;
+
+		nlohmann::json cargo_json;
+		cargo_json["cargo_id"] = ct;
+		cargo_json["cargo_name"] = StrMakeValid(GetString(cs->name));
+		cargo_json["loaded"] = pair.second.first;
+		cargo_json["capacity"] = pair.second.second;
+		cargo_json["utilization_pct"] = pair.second.second > 0 ? (pair.second.first * 100 / pair.second.second) : 0;
+		cargo_list.push_back(cargo_json);
+	}
+	result["cargo"] = cargo_list;
+
+	/* Total utilization */
+	uint total_loaded = 0, total_capacity = 0;
+	for (const auto &pair : cargo_data) {
+		total_loaded += pair.second.first;
+		total_capacity += pair.second.second;
+	}
+	result["total_loaded"] = total_loaded;
+	result["total_capacity"] = total_capacity;
+	result["total_utilization_pct"] = total_capacity > 0 ? (total_loaded * 100 / total_capacity) : 0;
+
+	return result;
+}
+
+/**
+ * Handler for airport.info - Get information about airport types.
+ *
+ * Parameters:
+ *   type: Airport type name (optional, returns all if omitted)
+ *
+ * Returns airport specifications including size, cost, and availability.
+ */
+static nlohmann::json HandleAirportInfo(const nlohmann::json &params)
+{
+	auto get_airport_type_name = [](AirportTypes type) -> const char* {
+		switch (type) {
+			case AT_SMALL: return "small";
+			case AT_LARGE: return "large";
+			case AT_METROPOLITAN: return "metropolitan";
+			case AT_INTERNATIONAL: return "international";
+			case AT_COMMUTER: return "commuter";
+			case AT_INTERCON: return "intercontinental";
+			case AT_HELIPORT: return "heliport";
+			case AT_HELISTATION: return "helistation";
+			case AT_HELIDEPOT: return "helidepot";
+			case AT_OILRIG: return "oilrig";
+			default: return "unknown";
+		}
+	};
+
+	auto airport_type_from_string = [](const std::string &name) -> AirportTypes {
+		if (name == "small") return AT_SMALL;
+		if (name == "large") return AT_LARGE;
+		if (name == "metropolitan") return AT_METROPOLITAN;
+		if (name == "international") return AT_INTERNATIONAL;
+		if (name == "commuter") return AT_COMMUTER;
+		if (name == "intercontinental") return AT_INTERCON;
+		if (name == "heliport") return AT_HELIPORT;
+		if (name == "helistation") return AT_HELISTATION;
+		if (name == "helidepot") return AT_HELIDEPOT;
+		if (name == "oilrig") return AT_OILRIG;
+		return AT_INVALID;
+	};
+
+	auto get_airport_info = [&](AirportTypes type) -> nlohmann::json {
+		nlohmann::json info;
+		info["type"] = get_airport_type_name(type);
+		info["type_id"] = static_cast<int>(type);
+
+		const AirportSpec *as = AirportSpec::Get(type);
+		if (as == nullptr || !as->enabled) {
+			info["available"] = false;
+			return info;
+		}
+
+		info["available"] = true;
+		info["width"] = as->size_x;
+		info["height"] = as->size_y;
+		info["catchment_radius"] = as->catchment;
+		info["noise_level"] = as->noise_level;
+		info["num_hangars"] = static_cast<int>(as->depots.size());
+
+		/* Check if it's helicopter-only */
+		bool heli_only = (type == AT_HELIPORT || type == AT_HELISTATION || type == AT_HELIDEPOT);
+		info["helicopter_only"] = heli_only;
+
+		/* Get maintenance cost */
+		info["maintenance_cost_factor"] = as->maintenance_cost;
+
+		return info;
+	};
+
+	if (params.contains("type")) {
+		std::string type_name = params["type"].get<std::string>();
+		AirportTypes type = airport_type_from_string(type_name);
+		if (type == AT_INVALID) {
+			throw std::runtime_error("Invalid airport type: " + type_name);
+		}
+		return get_airport_info(type);
+	}
+
+	/* Return all standard airport types (0-9) */
+	nlohmann::json result = nlohmann::json::array();
+	static const AirportTypes standard_airports[] = {
+		AT_SMALL, AT_LARGE, AT_HELIPORT, AT_METROPOLITAN,
+		AT_INTERNATIONAL, AT_COMMUTER, AT_HELIDEPOT,
+		AT_INTERCON, AT_HELISTATION, AT_OILRIG
+	};
+	for (AirportTypes type : standard_airports) {
+		const AirportSpec *as = AirportSpec::Get(type);
+		if (as != nullptr && as->enabled) {
+			result.push_back(get_airport_info(type));
+		}
+	}
+	return result;
+}
+
 void RpcRegisterQueryHandlers(RpcServer &server)
 {
 	server.RegisterHandler("ping", HandlePing);
@@ -1111,4 +1709,14 @@ void RpcRegisterQueryHandlers(RpcServer &server)
 	server.RegisterHandler("order.list", HandleOrderList);
 	server.RegisterHandler("engine.list", HandleEngineList);
 	server.RegisterHandler("engine.get", HandleEngineGet);
+	server.RegisterHandler("subsidy.list", HandleSubsidyList);
+	server.RegisterHandler("cargo.list", HandleCargoList);
+	server.RegisterHandler("cargo.getIncome", HandleCargoGetIncome);
+	server.RegisterHandler("cargomonitor.getDelivery", HandleCargoMonitorGetDelivery);
+	server.RegisterHandler("cargomonitor.getPickup", HandleCargoMonitorGetPickup);
+	server.RegisterHandler("industry.getStockpile", HandleIndustryGetStockpile);
+	server.RegisterHandler("industry.getAcceptance", HandleIndustryGetAcceptance);
+	server.RegisterHandler("station.getCargoPlanned", HandleStationGetCargoPlanned);
+	server.RegisterHandler("vehicle.getCargoByType", HandleVehicleGetCargoByType);
+	server.RegisterHandler("airport.info", HandleAirportInfo);
 }

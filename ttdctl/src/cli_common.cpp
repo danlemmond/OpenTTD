@@ -32,8 +32,12 @@ void PrintUsage()
 	std::cout << "  tile                Tile information\n";
 	std::cout << "  town                Town information\n";
 	std::cout << "  order               Vehicle order information\n";
+	std::cout << "  subsidy             Subsidy opportunities\n";
+	std::cout << "  cargo               Cargo types and income calculation\n";
 	std::cout << "  road                Road infrastructure building\n";
 	std::cout << "  rail                Rail infrastructure building\n";
+	std::cout << "  marine              Marine infrastructure (docks, depots)\n";
+	std::cout << "  airport             Airport information and building\n";
 	std::cout << "  viewport            Camera/viewport control\n";
 	std::cout << "  activity            Activity tracking for auto-camera\n";
 	std::cout << "\nVehicle Management:\n";
@@ -70,6 +74,15 @@ void PrintUsage()
 	std::cout << "  marine dock         Build a ship dock\n";
 	std::cout << "  marine depot        Build a ship depot\n";
 	std::cout << "  airport build       Build an airport\n";
+	std::cout << "\nEconomic/Analytics Commands:\n";
+	std::cout << "  subsidy list        List available subsidies\n";
+	std::cout << "  cargo list          List all cargo types\n";
+	std::cout << "  cargo income        Calculate income for a route\n";
+	std::cout << "  industry stockpile  View cargo stockpiled at industry\n";
+	std::cout << "  industry acceptance Check cargo acceptance at industry\n";
+	std::cout << "  station flow        View cargo flow at station\n";
+	std::cout << "  vehicle cargo       View cargo breakdown for vehicle\n";
+	std::cout << "  airport info        List airport types and specs\n";
 	std::cout << "\nMeta Commands:\n";
 	std::cout << "  game newgame        Start a new game with default settings\n";
 	std::cout << "\nCamera/Viewport Control:\n";

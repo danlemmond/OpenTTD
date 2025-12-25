@@ -54,6 +54,14 @@ int HandleTileGet(RpcClient &client, const CliOptions &opts);
 int HandleTownList(RpcClient &client, const CliOptions &opts);
 int HandleTownGet(RpcClient &client, const CliOptions &opts);
 int HandleOrderList(RpcClient &client, const CliOptions &opts);
+int HandleSubsidyList(RpcClient &client, const CliOptions &opts);
+int HandleCargoList(RpcClient &client, const CliOptions &opts);
+int HandleCargoGetIncome(RpcClient &client, const CliOptions &opts);
+int HandleIndustryGetStockpile(RpcClient &client, const CliOptions &opts);
+int HandleIndustryGetAcceptance(RpcClient &client, const CliOptions &opts);
+int HandleStationGetCargoFlow(RpcClient &client, const CliOptions &opts);
+int HandleVehicleGetCargoByType(RpcClient &client, const CliOptions &opts);
+int HandleAirportInfo(RpcClient &client, const CliOptions &opts);
 
 /* Action commands - commands_action.cpp */
 int HandleGameNewGame(RpcClient &client, const CliOptions &opts);

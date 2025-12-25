@@ -35,11 +35,23 @@ int main(int argc, char *argv[])
 		} else if (opts.action == "setloan") {
 			return HandleCompanySetLoan(client, opts);
 		}
+	} else if (opts.resource == "subsidy") {
+		if (opts.action == "list" || opts.action.empty()) {
+			return HandleSubsidyList(client, opts);
+		}
+	} else if (opts.resource == "cargo") {
+		if (opts.action == "list" || opts.action.empty()) {
+			return HandleCargoList(client, opts);
+		} else if (opts.action == "income") {
+			return HandleCargoGetIncome(client, opts);
+		}
 	} else if (opts.resource == "vehicle") {
 		if (opts.action == "list" || opts.action.empty()) {
 			return HandleVehicleList(client, opts);
 		} else if (opts.action == "get") {
 			return HandleVehicleGet(client, opts);
+		} else if (opts.action == "cargo") {
+			return HandleVehicleGetCargoByType(client, opts);
 		} else if (opts.action == "build") {
 			return HandleVehicleBuild(client, opts);
 		} else if (opts.action == "sell") {
@@ -66,12 +78,18 @@ int main(int argc, char *argv[])
 			return HandleStationList(client, opts);
 		} else if (opts.action == "get") {
 			return HandleStationGet(client, opts);
+		} else if (opts.action == "flow") {
+			return HandleStationGetCargoFlow(client, opts);
 		}
 	} else if (opts.resource == "industry") {
 		if (opts.action == "list" || opts.action.empty()) {
 			return HandleIndustryList(client, opts);
 		} else if (opts.action == "get") {
 			return HandleIndustryGet(client, opts);
+		} else if (opts.action == "stockpile") {
+			return HandleIndustryGetStockpile(client, opts);
+		} else if (opts.action == "acceptance") {
+			return HandleIndustryGetAcceptance(client, opts);
 		}
 	} else if (opts.resource == "map") {
 		if (opts.action == "info" || opts.action.empty()) {
@@ -116,6 +134,8 @@ int main(int argc, char *argv[])
 	} else if (opts.resource == "airport") {
 		if (opts.action == "build") {
 			return HandleAirportBuild(client, opts);
+		} else if (opts.action == "info" || opts.action.empty()) {
+			return HandleAirportInfo(client, opts);
 		}
 	} else if (opts.resource == "town") {
 		if (opts.action == "list" || opts.action.empty()) {
