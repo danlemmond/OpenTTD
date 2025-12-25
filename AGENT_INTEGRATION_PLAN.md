@@ -4,7 +4,7 @@
 
 This document outlines the plan to integrate a Claude Code AI agent terminal into OpenTTD, similar to the RampLabs experiment done with OpenRCT2.
 
-## Status: Phase 3 Complete - Full RPC API + All Infrastructure Building
+## Status: Phase 3 Complete - Full RPC API + Infrastructure + Economic Analytics
 
 Started: 2025-12-25
 Last Updated: 2025-12-25
@@ -400,6 +400,7 @@ Based on analysis of the Script API, here are the handlers needed:
 |--------|--------|-------------|---------------------|
 | `vehicle.list` | ✅ | List all vehicles | `ScriptVehicleList` |
 | `vehicle.get` | ✅ | Get vehicle details | `ScriptVehicle` |
+| `vehicle.getCargoByType` | ✅ | Cargo breakdown per type | Vehicle cargo iteration |
 | `vehicle.build` | ✅ | Purchase new vehicle | `ScriptVehicle::BuildVehicle` |
 | `vehicle.sell` | ✅ | Sell vehicle | `ScriptVehicle::SellVehicle` |
 | `vehicle.clone` | ✅ | Clone vehicle with orders | `ScriptVehicle::CloneVehicle` |
@@ -419,6 +420,7 @@ Based on analysis of the Script API, here are the handlers needed:
 |--------|--------|-------------|---------------------|
 | `station.list` | ✅ | List all stations | `ScriptStationList` |
 | `station.get` | ✅ | Get station details with cargo | `ScriptStation` |
+| `station.getCargoPlanned` | ✅ | Cargo flow from link graph | LinkGraph edges |
 
 ### Order Handlers
 | Method | Status | Description | Script API Reference |
@@ -435,6 +437,8 @@ Based on analysis of the Script API, here are the handlers needed:
 |--------|--------|-------------|---------------------|
 | `industry.list` | ✅ | List all industries | `ScriptIndustryList` |
 | `industry.get` | ✅ | Get industry details with production | `ScriptIndustry` |
+| `industry.getStockpile` | ✅ | Cargo stockpiled at industry | `ScriptIndustry::GetStockpiledCargo` |
+| `industry.getAcceptance` | ✅ | What cargo an industry accepts | `ScriptIndustryType::GetAcceptedCargo` |
 
 ### Town Handlers
 | Method | Status | Description | Script API Reference |
@@ -466,6 +470,16 @@ Based on analysis of the Script API, here are the handlers needed:
 | `marine.buildDock` | ✅ | Build dock | `CMD_BUILD_DOCK` |
 | `marine.buildDepot` | ✅ | Build ship depot | `CMD_BUILD_SHIP_DEPOT` |
 | `airport.build` | ✅ | Build airport (all types) | `CMD_BUILD_AIRPORT` |
+
+### Economic/Analytics Handlers
+| Method | Status | Description | Script API Reference |
+|--------|--------|-------------|---------------------|
+| `subsidy.list` | ✅ | Available subsidy opportunities | `ScriptSubsidy` iteration |
+| `cargo.list` | ✅ | All cargo types with properties | `ScriptCargo` iteration |
+| `cargo.getIncome` | ✅ | Calculate income for cargo route | `GetTransportedGoodsIncome` |
+| `cargomonitor.getDelivery` | ✅ | Cargo delivered to industry/town | `CargoMonitor::GetDeliveryAmount` |
+| `cargomonitor.getPickup` | ✅ | Cargo picked up from industry/town | `CargoMonitor::GetPickupAmount` |
+| `airport.info` | ✅ | Airport type specifications | `AirportSpec` |
 
 #### Infrastructure Placement Notes
 When searching for valid build locations, these sizes and anchor points apply:
@@ -958,6 +972,14 @@ At the end of each round, specialists write a report to `reports/ROUND_N_<AGENT>
 | `order.list` | ✅ | Get vehicle orders |
 | `engine.list` | ✅ | List available engines by type |
 | `engine.get` | ✅ | Get engine details with refit options |
+| `subsidy.list` | ✅ | Available subsidy opportunities |
+| `cargo.list` | ✅ | All cargo types with properties |
+| `cargo.getIncome` | ✅ | Calculate income for cargo route |
+| `industry.getStockpile` | ✅ | Cargo stockpiled at industry |
+| `industry.getAcceptance` | ✅ | What cargo an industry accepts |
+| `station.getCargoPlanned` | ✅ | Cargo flow from link graph |
+| `vehicle.getCargoByType` | ✅ | Cargo breakdown per type |
+| `airport.info` | ✅ | Airport type specifications |
 
 #### Action Handlers (Mutations)
 | Handler | Status | Description |
@@ -1198,10 +1220,13 @@ ttdctl vehicle refit <id> --cargo <cargo_id>
 # Stations
 ttdctl station list
 ttdctl station get <id>
+ttdctl station flow <id>
 
 # Industries
 ttdctl industry list
 ttdctl industry get <id>
+ttdctl industry stockpile <id>
+ttdctl industry acceptance <id>
 
 # Towns
 ttdctl town list
@@ -1236,6 +1261,19 @@ ttdctl road stop <x> <y> --direction <ne|se|sw|nw> --type <bus|truck>
 ttdctl rail track <x> <y> --track <x|y|upper|lower|left|right>
 ttdctl rail depot <x> <y> --direction <ne|se|sw|nw>
 ttdctl rail station <x> <y> --axis <x|y> --platforms <n> --length <n>
+
+# Subsidies
+ttdctl subsidy list
+
+# Cargo Economics
+ttdctl cargo list
+ttdctl cargo income <cargo_type> <distance> <days> [amount]
+
+# Vehicle Cargo
+ttdctl vehicle cargo <id>
+
+# Airport Info
+ttdctl airport info
 
 # Camera/Viewport Control (for streaming)
 ttdctl viewport goto <x> <y> [--instant]
