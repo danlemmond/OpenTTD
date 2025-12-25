@@ -19,6 +19,7 @@
 #include "../station_cmd.h"
 #include "../road_map.h"
 #include "../rail_map.h"
+#include "../signal_type.h"
 #include "../direction_func.h"
 #include "../newgrf_station.h"
 #include "../newgrf_roadstop.h"
@@ -308,6 +309,10 @@ static nlohmann::json HandleRoadBuild(const nlohmann::json &params)
 
 	cur_company.Restore();
 
+	if (cost.Succeeded()) {
+		RpcRecordActivity(tile, "road.build");
+	}
+
 	nlohmann::json result;
 	result["tile"] = tile.base();
 	result["success"] = cost.Succeeded();
@@ -353,6 +358,10 @@ static nlohmann::json HandleRoadBuildDepot(const nlohmann::json &params)
 	CommandCost cost = Command<CMD_BUILD_ROAD_DEPOT>::Do(flags, tile, rt, dir);
 
 	cur_company.Restore();
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(tile, "road.buildDepot");
+	}
 
 	nlohmann::json result;
 	result["tile"] = tile.base();
@@ -420,6 +429,10 @@ static nlohmann::json HandleRoadBuildStop(const nlohmann::json &params)
 
 	cur_company.Restore();
 
+	if (cost.Succeeded()) {
+		RpcRecordActivity(tile, "road.buildStop");
+	}
+
 	nlohmann::json result;
 	result["tile"] = tile.base();
 	result["direction"] = DiagDirectionToString(ddir);
@@ -482,6 +495,13 @@ static nlohmann::json HandleRailBuildTrack(const nlohmann::json &params)
 
 	cur_company.Restore();
 
+	if (cost.Succeeded()) {
+		RpcRecordActivity(start_tile, "rail.buildTrack");
+		if (end_tile != start_tile) {
+			RpcRecordActivity(end_tile, "rail.buildTrack");
+		}
+	}
+
 	nlohmann::json result;
 	result["start_tile"] = start_tile.base();
 	result["end_tile"] = end_tile.base();
@@ -528,6 +548,10 @@ static nlohmann::json HandleRailBuildDepot(const nlohmann::json &params)
 	CommandCost cost = Command<CMD_BUILD_TRAIN_DEPOT>::Do(flags, tile, railtype, dir);
 
 	cur_company.Restore();
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(tile, "rail.buildDepot");
+	}
 
 	nlohmann::json result;
 	result["tile"] = tile.base();
@@ -586,6 +610,10 @@ static nlohmann::json HandleRailBuildStation(const nlohmann::json &params)
 
 	cur_company.Restore();
 
+	if (cost.Succeeded()) {
+		RpcRecordActivity(tile, "rail.buildStation");
+	}
+
 	nlohmann::json result;
 	result["tile"] = tile.base();
 	result["axis"] = (axis == AXIS_X) ? "x" : "y";
@@ -601,6 +629,270 @@ static nlohmann::json HandleRailBuildStation(const nlohmann::json &params)
 	return result;
 }
 
+/**
+ * Parse a signal type string to SignalType enum.
+ */
+static SignalType ParseSignalType(const nlohmann::json &value)
+{
+	if (value.is_number()) {
+		int sig = value.get<int>();
+		if (sig < 0 || sig > SIGTYPE_LAST) {
+			throw std::runtime_error("Invalid signal type: must be 0-5");
+		}
+		return static_cast<SignalType>(sig);
+	}
+
+	std::string str = value.get<std::string>();
+	if (str == "block" || str == "normal") return SIGTYPE_BLOCK;
+	if (str == "entry") return SIGTYPE_ENTRY;
+	if (str == "exit") return SIGTYPE_EXIT;
+	if (str == "combo") return SIGTYPE_COMBO;
+	if (str == "pbs" || str == "path") return SIGTYPE_PBS;
+	if (str == "pbs_oneway" || str == "path_oneway" || str == "no_entry") return SIGTYPE_PBS_ONEWAY;
+
+	throw std::runtime_error("Invalid signal type: use block, entry, exit, combo, pbs, or pbs_oneway");
+}
+
+/**
+ * Get signal type name as string.
+ */
+static const char *SignalTypeToString(SignalType type)
+{
+	switch (type) {
+		case SIGTYPE_BLOCK: return "block";
+		case SIGTYPE_ENTRY: return "entry";
+		case SIGTYPE_EXIT: return "exit";
+		case SIGTYPE_COMBO: return "combo";
+		case SIGTYPE_PBS: return "pbs";
+		case SIGTYPE_PBS_ONEWAY: return "pbs_oneway";
+		default: return "unknown";
+	}
+}
+
+/**
+ * Handler for rail.buildSignal - build a rail signal.
+ *
+ * Parameters:
+ *   tile: Tile index (optional if x,y provided)
+ *   x, y: Tile coordinates (optional if tile provided)
+ *   track: Track to place signal on (x, y, upper, lower, left, right)
+ *   signal_type: Signal type (block, entry, exit, combo, pbs, pbs_oneway)
+ *   variant: Signal variant (electric, semaphore) - default: electric
+ *   two_way: Whether signal allows both directions (default: false)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the signal was built
+ *   tile: The tile where signal was built
+ *   track: The track the signal is on
+ *   signal_type: The type of signal built
+ *   cost: The cost of building the signal
+ */
+static nlohmann::json HandleRailBuildSignal(const nlohmann::json &params)
+{
+	/* Get tile */
+	TileIndex tile;
+	if (params.contains("tile")) {
+		tile = static_cast<TileIndex>(params["tile"].get<uint32_t>());
+	} else if (params.contains("x") && params.contains("y")) {
+		uint x = params["x"].get<uint>();
+		uint y = params["y"].get<uint>();
+		if (x >= Map::SizeX() || y >= Map::SizeY()) {
+			throw std::runtime_error("Coordinates out of bounds");
+		}
+		tile = TileXY(x, y);
+	} else {
+		throw std::runtime_error("Missing required parameter: tile or x/y");
+	}
+
+	/* Get track */
+	if (!params.contains("track")) {
+		throw std::runtime_error("Missing required parameter: track (x, y, upper, lower, left, right)");
+	}
+	Track track = ParseTrack(params["track"]);
+
+	/* Get signal type - default to block signal */
+	SignalType sigtype = SIGTYPE_BLOCK;
+	if (params.contains("signal_type")) {
+		sigtype = ParseSignalType(params["signal_type"]);
+	}
+
+	/* Get signal variant (electric or semaphore) */
+	SignalVariant sigvar = SIG_ELECTRIC;
+	if (params.contains("variant")) {
+		std::string var_str = params["variant"].get<std::string>();
+		if (var_str == "semaphore" || var_str == "sem") {
+			sigvar = SIG_SEMAPHORE;
+		} else if (var_str != "electric" && var_str != "light") {
+			throw std::runtime_error("Invalid variant: use electric or semaphore");
+		}
+	}
+
+	/* Two-way signal flag */
+	bool two_way = params.value("two_way", false);
+
+	/*
+	 * Calculate direction cycles based on signal type and two_way flag.
+	 * For one-way signals (non-PBS), we need 1 direction cycle to make them one-way.
+	 * For two-way signals, we use 0 cycles.
+	 * For PBS signals, they're naturally one-way, so 0 cycles for one-way PBS.
+	 */
+	uint8_t num_dir_cycle = 0;
+	if (!two_way) {
+		/* One-way signal */
+		if (sigtype != SIGTYPE_PBS && sigtype != SIGTYPE_PBS_ONEWAY) {
+			/* Block/presignals need 1 cycle to be one-way */
+			num_dir_cycle = 1;
+		}
+		/* PBS signals are already one-way by default */
+	}
+	/* two_way signals use 0 cycles */
+
+	/* Set company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	/*
+	 * CMD_BUILD_SINGLE_SIGNAL parameters:
+	 * - tile: where to build
+	 * - track: which track on the tile
+	 * - sigtype: signal type (SIGTYPE_BLOCK, etc.)
+	 * - sigvar: signal variant (SIG_ELECTRIC or SIG_SEMAPHORE)
+	 * - convert_signal: false for new signals
+	 * - skip_existing_signals: false
+	 * - ctrl_pressed: false (would toggle semaphore/electric)
+	 * - cycle_start, cycle_stop: not used for simple builds
+	 * - num_dir_cycle: number of direction cycles (0-3)
+	 * - signals_copy: 0 for new signals
+	 */
+	CommandCost cost = Command<CMD_BUILD_SINGLE_SIGNAL>::Do(
+		flags,
+		tile,
+		track,
+		sigtype,
+		sigvar,
+		false,              /* convert_signal */
+		false,              /* skip_existing_signals */
+		false,              /* ctrl_pressed */
+		SIGTYPE_BLOCK,      /* cycle_start (unused) */
+		SIGTYPE_BLOCK,      /* cycle_stop (unused) */
+		num_dir_cycle,
+		0                   /* signals_copy */
+	);
+
+	cur_company.Restore();
+
+	if (cost.Succeeded()) {
+		RpcRecordActivity(tile, "rail.buildSignal");
+	}
+
+	nlohmann::json result;
+	result["tile"] = tile.base();
+	result["x"] = TileX(tile);
+	result["y"] = TileY(tile);
+	result["success"] = cost.Succeeded();
+	result["cost"] = cost.GetCost().base();
+
+	if (cost.Succeeded()) {
+		/* Return details about what was built */
+		result["signal_type"] = SignalTypeToString(sigtype);
+		result["variant"] = (sigvar == SIG_SEMAPHORE) ? "semaphore" : "electric";
+		result["two_way"] = two_way;
+
+		/* Return track info */
+		switch (track) {
+			case TRACK_X: result["track"] = "x"; break;
+			case TRACK_Y: result["track"] = "y"; break;
+			case TRACK_UPPER: result["track"] = "upper"; break;
+			case TRACK_LOWER: result["track"] = "lower"; break;
+			case TRACK_LEFT: result["track"] = "left"; break;
+			case TRACK_RIGHT: result["track"] = "right"; break;
+			default: result["track"] = static_cast<int>(track); break;
+		}
+	} else {
+		result["error"] = "Failed to build signal - check tile has rail track, no overlapping tracks, and correct ownership";
+	}
+
+	return result;
+}
+
+/**
+ * Handler for rail.removeSignal - remove a rail signal.
+ *
+ * Parameters:
+ *   tile: Tile index (optional if x,y provided)
+ *   x, y: Tile coordinates (optional if tile provided)
+ *   track: Track to remove signal from (x, y, upper, lower, left, right)
+ *   company: Company ID (default: 0)
+ *
+ * Returns:
+ *   success: Whether the signal was removed
+ *   tile: The tile where signal was removed
+ *   refund: The refund amount
+ */
+static nlohmann::json HandleRailRemoveSignal(const nlohmann::json &params)
+{
+	/* Get tile */
+	TileIndex tile;
+	if (params.contains("tile")) {
+		tile = static_cast<TileIndex>(params["tile"].get<uint32_t>());
+	} else if (params.contains("x") && params.contains("y")) {
+		uint x = params["x"].get<uint>();
+		uint y = params["y"].get<uint>();
+		if (x >= Map::SizeX() || y >= Map::SizeY()) {
+			throw std::runtime_error("Coordinates out of bounds");
+		}
+		tile = TileXY(x, y);
+	} else {
+		throw std::runtime_error("Missing required parameter: tile or x/y");
+	}
+
+	/* Get track */
+	if (!params.contains("track")) {
+		throw std::runtime_error("Missing required parameter: track (x, y, upper, lower, left, right)");
+	}
+	Track track = ParseTrack(params["track"]);
+
+	/* Set company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	CommandCost cost = Command<CMD_REMOVE_SINGLE_SIGNAL>::Do(flags, tile, track);
+
+	cur_company.Restore();
+
+	nlohmann::json result;
+	result["tile"] = tile.base();
+	result["x"] = TileX(tile);
+	result["y"] = TileY(tile);
+	result["success"] = cost.Succeeded();
+
+	/* Return track info */
+	switch (track) {
+		case TRACK_X: result["track"] = "x"; break;
+		case TRACK_Y: result["track"] = "y"; break;
+		case TRACK_UPPER: result["track"] = "upper"; break;
+		case TRACK_LOWER: result["track"] = "lower"; break;
+		case TRACK_LEFT: result["track"] = "left"; break;
+		case TRACK_RIGHT: result["track"] = "right"; break;
+		default: result["track"] = static_cast<int>(track); break;
+	}
+
+	if (cost.Succeeded()) {
+		result["refund"] = -cost.GetCost().base(); /* Cost is negative for removal */
+	} else {
+		result["error"] = "Failed to remove signal - check tile has a signal on the specified track";
+	}
+
+	return result;
+}
+
 void RpcRegisterInfraHandlers(RpcServer &server)
 {
 	server.RegisterHandler("tile.getRoadInfo", HandleTileGetRoadInfo);
@@ -610,4 +902,6 @@ void RpcRegisterInfraHandlers(RpcServer &server)
 	server.RegisterHandler("rail.buildTrack", HandleRailBuildTrack);
 	server.RegisterHandler("rail.buildDepot", HandleRailBuildDepot);
 	server.RegisterHandler("rail.buildStation", HandleRailBuildStation);
+	server.RegisterHandler("rail.buildSignal", HandleRailBuildSignal);
+	server.RegisterHandler("rail.removeSignal", HandleRailRemoveSignal);
 }
