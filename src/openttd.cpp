@@ -73,6 +73,7 @@
 #include "industry.h"
 #include "network/network_gui.h"
 #include "network/network_survey.h"
+#include "rpc/rpc_server.h"
 #include "misc_cmd.h"
 #include "timer/timer.h"
 #include "timer/timer_game_calendar.h"
@@ -295,6 +296,7 @@ static void ShutdownGame()
 {
 	IConsoleFree();
 
+	RpcServerStop();
 	if (_network_available) NetworkShutDown(); // Shut down the network and close any open connections
 
 	SocialIntegration::Shutdown();
@@ -766,6 +768,7 @@ int openttd_main(std::span<std::string_view> arguments)
 
 	SocialIntegration::Initialize();
 	NetworkStartUp(); // initialize network-core
+	RpcServerStart();
 
 	if (!HandleBootstrap()) {
 		ShutdownGame();
@@ -1372,6 +1375,8 @@ void GameLoop()
 
 	/* Check for UDP stuff */
 	if (_network_available) NetworkBackgroundLoop();
+
+	RpcServerPoll();
 
 	DebugSendRemoteMessages();
 
