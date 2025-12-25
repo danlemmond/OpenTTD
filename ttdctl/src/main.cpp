@@ -41,11 +41,15 @@ static void PrintUsage()
 	std::cout << "  ping                Test connection to game\n";
 	std::cout << "  game                Game status and control\n";
 	std::cout << "  company             Company information\n";
+	std::cout << "  vehicle             Vehicle information\n";
 	std::cout << "\nExamples:\n";
 	std::cout << "  ttdctl ping\n";
 	std::cout << "  ttdctl game status\n";
 	std::cout << "  ttdctl company list\n";
 	std::cout << "  ttdctl company list -o json\n";
+	std::cout << "  ttdctl vehicle list\n";
+	std::cout << "  ttdctl vehicle list road\n";
+	std::cout << "  ttdctl vehicle get 42\n";
 }
 
 static CliOptions ParseArgs(int argc, char *argv[])
@@ -181,6 +185,88 @@ static int HandleCompanyList(RpcClient &client, const CliOptions &opts)
 	}
 }
 
+static int HandleVehicleList(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		nlohmann::json params;
+		if (!opts.args.empty()) {
+			params["type"] = opts.args[0];
+		}
+
+		auto result = client.Call("vehicle.list", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		if (result.empty()) {
+			std::cout << "No vehicles found.\n";
+			return 0;
+		}
+
+		std::vector<std::vector<std::string>> rows;
+		rows.push_back({"ID", "Type", "Name", "State", "Speed", "Profit"});
+
+		for (const auto &v : result) {
+			rows.push_back({
+				std::to_string(v["id"].get<int>()),
+				v["type"].get<std::string>(),
+				v["name"].get<std::string>(),
+				v["state"].get<std::string>(),
+				std::to_string(v["speed"].get<int>()) + "/" + std::to_string(v["max_speed"].get<int>()),
+				std::to_string(v["profit_this_year"].get<int64_t>())
+			});
+		}
+
+		PrintTable(rows);
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleVehicleGet(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.empty()) {
+			std::cerr << "Error: vehicle ID required\n";
+			std::cerr << "Usage: ttdctl vehicle get <id>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["id"] = std::stoi(opts.args[0]);
+
+		auto result = client.Call("vehicle.get", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << "Vehicle #" << result["id"].get<int>() << "\n";
+		std::cout << "---------------\n";
+		std::cout << "Name:        " << result["name"].get<std::string>() << "\n";
+		std::cout << "Type:        " << result["type"].get<std::string>() << "\n";
+		std::cout << "Owner:       " << result["owner"].get<int>() << "\n";
+		std::cout << "State:       " << result["state"].get<std::string>() << "\n";
+		std::cout << "Speed:       " << result["speed"].get<int>() << "/" << result["max_speed"].get<int>() << "\n";
+		std::cout << "Age:         " << result["age_days"].get<int>() << " days\n";
+		std::cout << "Reliability: " << result["reliability"].get<int>() << "%\n";
+		std::cout << "Value:       " << result["value"].get<int64_t>() << "\n";
+		std::cout << "Profit (Y):  " << result["profit_this_year"].get<int64_t>() << "\n";
+		std::cout << "Profit (LY): " << result["profit_last_year"].get<int64_t>() << "\n";
+		std::cout << "Cargo Cap:   " << result["cargo_capacity"].get<int>() << "\n";
+		std::cout << "Cargo Load:  " << result["cargo_count"].get<int>() << "\n";
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	auto opts = ParseArgs(argc, argv);
@@ -201,6 +287,12 @@ int main(int argc, char *argv[])
 	} else if (opts.resource == "company") {
 		if (opts.action == "list" || opts.action.empty()) {
 			return HandleCompanyList(client, opts);
+		}
+	} else if (opts.resource == "vehicle") {
+		if (opts.action == "list" || opts.action.empty()) {
+			return HandleVehicleList(client, opts);
+		} else if (opts.action == "get") {
+			return HandleVehicleGet(client, opts);
 		}
 	}
 
