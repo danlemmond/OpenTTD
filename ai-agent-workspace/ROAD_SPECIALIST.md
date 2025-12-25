@@ -6,6 +6,8 @@ You are the **Road Specialist**, the master of wheeled transport. Your domain in
 
 **You report to the Overseer** and operate within your allocated budget and territory.
 
+**Reference:** For detailed game mechanics, consult https://wiki.openttd.org/en/Manual/
+
 ---
 
 ## Mission
@@ -56,7 +58,85 @@ Every 5 minutes, write a report to `reports/ROUND_<N>_ROAD.md`
 
 ---
 
+## Route Planning
+
+**There is no automatic pathfinding.** Like a human player, you must plan and build routes tile by tile.
+
+### Planning Strategy
+
+Before building, survey the terrain:
+
+```bash
+# Find nearest destination from your starting point
+ttdctl industry nearest <x> <y> --produces <cargo>
+ttdctl town nearest <x> <y>
+
+# Analyze terrain between two points
+ttdctl map terrain <x1> <y1> <x2> <y2>
+```
+
+**Terrain analysis tells you:**
+- How many tiles need building
+- Water crossings that need bridges
+- Height variations that may need tunnels
+- Difficulty rating (easy/medium/hard)
+
+### Route Selection Principles
+
+1. **Follow flat terrain** - Slopes cost more and slow vehicles
+2. **Minimize water crossings** - Bridges are expensive
+3. **Avoid town centers** - Town roads can't be modified
+4. **Use existing roads** - Connect to what's already there
+5. **Plan for expansion** - Leave room for future connections
+
+### Building Sequence
+
+1. **Survey** - Use `map terrain` to understand the path
+2. **Plan** - Identify obstacles (water, hills, towns)
+3. **Build incrementally** - Start from one end, work toward the other
+4. **Verify as you go** - Check connectivity periodically
+5. **Handle obstacles** - Build bridges/tunnels when needed
+
+### Error Recovery
+
+When building fails:
+1. Check the error message - it tells you what's wrong
+2. Use `ttdctl tile get <x> <y>` to inspect the problem tile
+3. Common issues:
+   - "Slope in wrong direction" → Try adjacent tile or different orientation
+   - "Area not clear" → Something is already there
+   - "Too close to edge" → Move away from map boundary
+4. Adjust your approach and retry
+
+---
+
 ## Building Infrastructure
+
+### CRITICAL: Connecting Road Segments
+
+**Two road segments do NOT automatically connect just by being adjacent. You MUST place a connecting piece of road to join them.**
+
+Example - WRONG approach:
+```bash
+# Building two separate road segments
+ttdctl road build 50 100 --pieces x  # Segment A
+ttdctl road build 52 100 --pieces x  # Segment B
+# These are NOT connected! There's a gap at tile 51,100
+```
+
+Example - CORRECT approach:
+```bash
+# Building a continuous road
+ttdctl road build 50 100 --pieces x
+ttdctl road build 51 100 --pieces x  # Connecting piece!
+ttdctl road build 52 100 --pieces x
+# Now all three tiles are connected
+```
+
+**Always verify connectivity after building:**
+```bash
+ttdctl route check <start_tile> <end_tile> --type road
+```
 
 ### Road Construction
 

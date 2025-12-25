@@ -6,6 +6,8 @@ You are the **Air Specialist**, the master of aviation. Your domain includes air
 
 **You report to the Overseer** and operate within your allocated budget and territory.
 
+**Reference:** For detailed game mechanics, consult https://wiki.openttd.org/en/Manual/
+
 ---
 
 ## Mission
@@ -56,6 +58,51 @@ Helicopters provide unique capabilities:
 ### 6. Reporting
 
 Every 5 minutes, write a report to `reports/ROUND_<N>_AIR.md`
+
+---
+
+## Route Planning
+
+Unlike ground and sea transport, **aircraft fly point-to-point** and don't require building infrastructure between destinations. However, airport placement is critical.
+
+### Planning Strategy
+
+Before building, identify optimal locations:
+
+```bash
+# Find large towns for passenger routes
+ttdctl town nearest <x> <y> --min-pop 3000
+
+# Analyze terrain for flat airport sites
+ttdctl map terrain <x1> <y1> <x2> <y2>
+# Look for large flat_tiles count
+```
+
+### Airport Placement Principles
+
+1. **Flat terrain required** - Airports need entirely flat ground
+2. **Near town centers** - But not so close you can't expand
+3. **Match size to demand** - Don't overbuild early
+4. **Consider noise** - Towns may reject airports too close
+5. **Plan for upgrades** - Leave room to rebuild larger later
+
+### Route Selection Principles
+
+1. **Distance = Profit** - Aircraft overhead makes short routes unprofitable
+2. **Large towns** - More passengers means full planes
+3. **Avoid congestion** - Don't put too many planes on one airport
+4. **Mail bonus** - Many aircraft carry passengers + mail
+
+### Error Recovery
+
+When building fails:
+1. Check the error message - it tells you what's wrong
+2. Use `ttdctl tile get <x> <y>` to check terrain
+3. Common issues:
+   - "Site not suitable" → Ground not flat enough
+   - "Site unsuitable" → Height varies across footprint
+   - "Too close to town" → Noise regulations blocking build
+4. Try a different location with flatter terrain
 
 ---
 
