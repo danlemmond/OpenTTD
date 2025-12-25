@@ -17,6 +17,10 @@
 #include <thread>
 #include <mutex>
 
+#ifdef __APPLE__
+#include "os/macosx/macos.h"
+#endif
+
 /**
  * Sleep on the current thread for a defined time.
  * @param milliseconds Time to sleep for in milliseconds.
@@ -61,12 +65,26 @@ inline bool StartNewThread(std::thread *thr, std::string_view name, TFn&& _Fx, T
 				SetCurrentThreadName(name);
 				CrashLog::InitThread();
 				try {
+#ifdef __APPLE__
+					/* On macOS, wrap the call in an Objective-C exception handler
+					 * to catch NSExceptions and log detailed information about them
+					 * before they propagate up as C++ exceptions. */
+					MacOSRunWithExceptionHandler([&]() {
+						F(A...);
+					});
+#else
 					/* Call user function with the given arguments. */
 					F(A...);
+#endif
 				} catch (std::exception &e) {
 					FatalError("Unhandled exception in {} thread: {}", name, e.what());
 				} catch (...) {
-					NOT_REACHED();
+					/* On macOS, Objective-C exceptions (NSException) are caught here.
+					 * We cannot call NOT_REACHED() because it tries to show a dialog,
+					 * which crashes when called from a background thread.
+					 * Instead, log and terminate cleanly. */
+					Debug(misc, 0, "Unknown exception in {} thread (possibly Objective-C NSException)", name);
+					std::terminate();
 				}
 			}, std::string{name}, std::forward<TFn>(_Fx), std::forward<TArgs>(_Ax)...);
 

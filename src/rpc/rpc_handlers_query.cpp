@@ -634,8 +634,15 @@ static nlohmann::json HandleTileGet(const nlohmann::json &params)
 	result["slope"] = static_cast<int>(slope);
 	result["is_flat"] = (slope == SLOPE_FLAT);
 
-	Owner owner = GetTileOwner(tile);
-	result["owner"] = owner != INVALID_OWNER ? owner.base() : -1;
+	/* GetTileOwner has assertions that fail for MP_HOUSE and MP_INDUSTRY tiles.
+	 * Check tile type first to avoid assertion failures. */
+	TileType tt = GetTileType(tile);
+	if (tt != MP_HOUSE && tt != MP_INDUSTRY) {
+		Owner owner = GetTileOwner(tile);
+		result["owner"] = owner != INVALID_OWNER ? owner.base() : -1;
+	} else {
+		result["owner"] = -1;  /* Houses and industries don't have a single owner */
+	}
 
 	return result;
 }

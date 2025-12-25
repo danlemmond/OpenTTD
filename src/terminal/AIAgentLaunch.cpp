@@ -24,6 +24,11 @@
 #include <unistd.h>
 #endif
 
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <climits>
+#endif
+
 #include "../safeguards.h"
 
 namespace OpenTTD::Terminal {
@@ -32,7 +37,7 @@ namespace {
 
 constexpr const char *kAgentWorkspaceDir = ".openttd-agent";
 constexpr const char *kWorkspaceReadme = "CLAUDE.md";
-constexpr const char *kRepoReadmeFilename = "IN_GAME_AGENT.md";
+constexpr const char *kRepoReadmeFilename = "OVERSEER.md";
 constexpr int kMaxRepoSearchDepth = 8;
 
 #if defined(__APPLE__) || defined(__linux__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
@@ -178,11 +183,41 @@ std::optional<std::filesystem::path> DetectRepoRoot()
 {
 	std::vector<std::filesystem::path> seeds;
 
+	/* Check environment variable first (set by launch script or wrapper). */
+	if (const char *envRoot = std::getenv("OPENTTD_REPO_ROOT")) {
+		std::filesystem::path envPath(envRoot);
+		if (LooksLikeRepoRoot(envPath)) {
+			return envPath;
+		}
+	}
+
 	try {
 		seeds.push_back(std::filesystem::current_path());
 	} catch (...) {
 		/* Ignore failures; other probes may still succeed. */
 	}
+
+	/* Also check relative to the executable location. */
+#if defined(__APPLE__)
+	{
+		char pathBuf[PATH_MAX];
+		uint32_t size = sizeof(pathBuf);
+		if (_NSGetExecutablePath(pathBuf, &size) == 0) {
+			std::error_code ec;
+			auto exePath = std::filesystem::canonical(pathBuf, ec);
+			if (!ec) {
+				seeds.push_back(exePath.parent_path());
+			}
+		}
+	}
+#elif defined(__linux__)
+	try {
+		auto exePath = std::filesystem::read_symlink("/proc/self/exe");
+		seeds.push_back(exePath.parent_path());
+	} catch (...) {
+		/* Ignore if /proc not available. */
+	}
+#endif
 
 	for (const auto &seed : seeds) {
 		auto current = seed;

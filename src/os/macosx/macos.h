@@ -10,6 +10,8 @@
 #ifndef MACOS_H
 #define MACOS_H
 
+#include <functional>
+
 /** Helper function displaying a message the best possible way. */
 void ShowMacDialog(std::string_view title, std::string_view message, std::string_view button_label);
 
@@ -40,6 +42,12 @@ void MacOSSetThreadName(const std::string &name);
 
 uint64_t MacOSGetPhysicalMemory();
 
+/**
+ * Run a function wrapped in @try/@catch to catch Objective-C exceptions.
+ * @param func The function to run.
+ * @return true if the function completed without exception, false if an exception was caught.
+ */
+bool MacOSRunWithExceptionHandler(std::function<void()> func);
 
 /** Deleter that calls CFRelease rather than deleting the pointer. */
 template <typename T> struct CFDeleter {

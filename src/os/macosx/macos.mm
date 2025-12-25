@@ -260,3 +260,37 @@ uint64_t MacOSGetPhysicalMemory()
 {
 	return [ [ NSProcessInfo processInfo ] physicalMemory ];
 }
+
+/**
+ * Run a function wrapped in @try/@catch to catch Objective-C exceptions.
+ * This logs detailed exception information before re-throwing.
+ * @param func The function to run.
+ * @return true if the function completed without exception, false if an exception was caught.
+ */
+bool MacOSRunWithExceptionHandler(std::function<void()> func)
+{
+	@try {
+		func();
+		return true;
+	}
+	@catch (NSException *exception) {
+		/* Log detailed exception information. */
+		NSLog(@"[OpenTTD] Caught Objective-C exception:");
+		NSLog(@"  Name: %@", [exception name]);
+		NSLog(@"  Reason: %@", [exception reason]);
+		NSLog(@"  User Info: %@", [exception userInfo]);
+
+		/* Log call stack if available. */
+		NSArray *symbols = [exception callStackSymbols];
+		if (symbols != nil && [symbols count] > 0) {
+			NSLog(@"  Call Stack:");
+			for (NSString *symbol in symbols) {
+				NSLog(@"    %@", symbol);
+			}
+		}
+
+		/* Re-throw as C++ exception so it propagates up. */
+		std::string msg = [[exception reason] UTF8String] ?: "Unknown Objective-C exception";
+		throw std::runtime_error(msg);
+	}
+}

@@ -113,9 +113,6 @@ struct AIAgentTerminalWindow : Window
 		this->vscroll = this->GetScrollbar(WID_AAT_SCROLLBAR);
 		this->FinishInitNested(0);
 
-		/* Ensure the mono font cache is loaded. */
-		FontCache::LoadFontCaches(FontSizes{FS_MONO});
-
 		/* Set initial window size based on terminal dimensions and mono font height. */
 		int cell_height = GetCharacterHeight(FS_MONO);
 		int width = TERM_COLS * CELL_WIDTH + TERMINAL_PADDING * 2 + 12; /* +12 for scrollbar */
@@ -176,6 +173,52 @@ struct AIAgentTerminalWindow : Window
 		this->DrawWidgets();
 	}
 
+	/**
+	 * Check if a codepoint is safe to render.
+	 * Filters out problematic Unicode that might cause font rendering issues.
+	 */
+	static bool IsSafeCodepoint(char32_t cp)
+	{
+		/* Basic printable ASCII - always safe */
+		if (cp >= 0x20 && cp <= 0x7E) return true;
+
+		/* Latin-1 Supplement (common accented chars) */
+		if (cp >= 0xA0 && cp <= 0xFF) return true;
+
+		/* Latin Extended-A and B */
+		if (cp >= 0x100 && cp <= 0x24F) return true;
+
+		/* Box drawing characters (used by terminal UIs) */
+		if (cp >= 0x2500 && cp <= 0x257F) return true;
+
+		/* Block elements */
+		if (cp >= 0x2580 && cp <= 0x259F) return true;
+
+		/* Common punctuation and symbols */
+		if (cp >= 0x2000 && cp <= 0x206F) return true;
+
+		/* Arrows */
+		if (cp >= 0x2190 && cp <= 0x21FF) return true;
+
+		/* Mathematical operators */
+		if (cp >= 0x2200 && cp <= 0x22FF) return true;
+
+		/* Misc symbols */
+		if (cp >= 0x2600 && cp <= 0x26FF) return true;
+
+		/* Dingbats */
+		if (cp >= 0x2700 && cp <= 0x27BF) return true;
+
+		/* Braille patterns (sometimes used for graphics) */
+		if (cp >= 0x2800 && cp <= 0x28FF) return true;
+
+		/* Powerline/Nerd Font private use area - skip these as they may not render */
+		if (cp >= 0xE000 && cp <= 0xF8FF) return true;
+
+		/* Skip other characters that might cause issues */
+		return false;
+	}
+
 	/** Helper to draw a single terminal row. */
 	void DrawTerminalRow(const TerminalCell *cells, int cols, int x, int y, int right) const
 	{
@@ -185,8 +228,11 @@ struct AIAgentTerminalWindow : Window
 			if (cell.continuation) continue;
 
 			char32_t cp = cell.codepoint;
-			if (cp >= U' ') {
+			if (cp >= U' ' && IsSafeCodepoint(cp)) {
 				AppendUtf8(line, cp);
+			} else if (cp >= U' ') {
+				/* Unknown character - use replacement */
+				line += '?';
 			} else {
 				line += ' ';
 			}
