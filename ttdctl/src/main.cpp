@@ -49,12 +49,22 @@ static void PrintUsage()
 	std::cout << "  tile                Tile information\n";
 	std::cout << "  town                Town information\n";
 	std::cout << "  order               Vehicle order information\n";
-	std::cout << "\nActions:\n";
+	std::cout << "  road                Road infrastructure building\n";
+	std::cout << "  rail                Rail infrastructure building\n";
+	std::cout << "\nVehicle Actions:\n";
 	std::cout << "  vehicle startstop   Toggle vehicle start/stop\n";
 	std::cout << "  vehicle depot       Send vehicle to depot\n";
 	std::cout << "  vehicle turnaround  Cancel depot order (turn around)\n";
 	std::cout << "  order append        Add order to vehicle\n";
 	std::cout << "  order remove        Remove order from vehicle\n";
+	std::cout << "\nInfrastructure Actions:\n";
+	std::cout << "  tile roadinfo       Get road/rail orientation info for depot placement\n";
+	std::cout << "  road build          Build road pieces on a tile\n";
+	std::cout << "  road depot          Build a road vehicle depot\n";
+	std::cout << "  road stop           Build a bus/truck stop\n";
+	std::cout << "  rail track          Build railway track\n";
+	std::cout << "  rail depot          Build a train depot\n";
+	std::cout << "  rail station        Build a train station\n";
 	std::cout << "\nExamples:\n";
 	std::cout << "  ttdctl ping\n";
 	std::cout << "  ttdctl game status\n";
@@ -78,6 +88,14 @@ static void PrintUsage()
 	std::cout << "  ttdctl vehicle turnaround 42\n";
 	std::cout << "  ttdctl order append 42 --station 5 --load full --unload transfer\n";
 	std::cout << "  ttdctl order remove 42 --index 1\n";
+	std::cout << "\n  # Infrastructure:\n";
+	std::cout << "  ttdctl tile roadinfo 100 100            # Get road orientation info\n";
+	std::cout << "  ttdctl road build 100 100 --pieces x    # Build horizontal road\n";
+	std::cout << "  ttdctl road depot 101 100 --direction ne  # Build depot facing NE\n";
+	std::cout << "  ttdctl road stop 100 100 --direction se --type bus\n";
+	std::cout << "  ttdctl rail track 50 50 --track x       # Build X-axis track\n";
+	std::cout << "  ttdctl rail depot 51 50 --direction sw  # Build depot facing SW\n";
+	std::cout << "  ttdctl rail station 52 50 --axis x --platforms 2 --length 5\n";
 }
 
 static CliOptions ParseArgs(int argc, char *argv[])
@@ -1024,6 +1042,400 @@ static int HandleOrderRemove(RpcClient &client, const CliOptions &opts)
 	}
 }
 
+/* ===================== */
+/* === INFRASTRUCTURE === */
+/* ===================== */
+
+static int HandleTileRoadInfo(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl tile roadinfo <x> <y>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		auto result = client.Call("tile.getRoadInfo", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << "Road/Rail Info at (" << result["x"].get<int>() << ", " << result["y"].get<int>() << ")\n";
+		std::cout << "---------------\n";
+		std::cout << "Tile type: " << result["tile_type"].get<std::string>() << "\n";
+
+		if (result.contains("road_tile_type")) {
+			std::cout << "Road type: " << result["road_tile_type"].get<std::string>() << "\n";
+			if (result.contains("road_directions")) {
+				std::cout << "Road directions: ";
+				for (size_t i = 0; i < result["road_directions"].size(); ++i) {
+					if (i > 0) std::cout << ", ";
+					std::cout << result["road_directions"][i].get<std::string>();
+				}
+				std::cout << "\n";
+			}
+			if (result.contains("valid_depot_orientations") && !result["valid_depot_orientations"].empty()) {
+				std::cout << "\nValid depot orientations:\n";
+				for (const auto &orient : result["valid_depot_orientations"]) {
+					std::cout << "  " << orient["direction"].get<std::string>()
+					          << " (" << orient["direction_value"].get<int>() << "): "
+					          << orient["description"].get<std::string>() << "\n";
+				}
+			}
+			if (result.contains("depot_direction")) {
+				std::cout << "Depot direction: " << result["depot_direction"].get<std::string>() << "\n";
+			}
+		}
+
+		if (result.contains("tracks")) {
+			std::cout << "Tracks: ";
+			for (size_t i = 0; i < result["tracks"].size(); ++i) {
+				if (i > 0) std::cout << ", ";
+				std::cout << result["tracks"][i].get<std::string>();
+			}
+			std::cout << "\n";
+		}
+
+		if (result.contains("station_id")) {
+			std::cout << "Station: #" << result["station_id"].get<int>()
+			          << " (" << result["station_name"].get<std::string>() << ")\n";
+		}
+
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleRoadBuild(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl road build <x> <y> --pieces <bits>\n";
+			std::cerr << "  Pieces: x, y, all, or ne/se/sw/nw combinations\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		/* Parse options */
+		for (size_t i = 2; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--pieces" && i + 1 < opts.args.size()) {
+				params["pieces"] = opts.args[++i];
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		if (!params.contains("pieces")) {
+			std::cerr << "Error: --pieces is required\n";
+			std::cerr << "Usage: ttdctl road build <x> <y> --pieces <bits>\n";
+			return 1;
+		}
+
+		auto result = client.Call("road.build", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built road at tile " << result["tile"].get<int>()
+			          << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build road: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleRoadBuildDepot(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl road depot <x> <y> --direction <ne|se|sw|nw>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		/* Parse options */
+		for (size_t i = 2; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--direction" && i + 1 < opts.args.size()) {
+				params["direction"] = opts.args[++i];
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		if (!params.contains("direction")) {
+			std::cerr << "Error: --direction is required\n";
+			std::cerr << "Usage: ttdctl road depot <x> <y> --direction <ne|se|sw|nw>\n";
+			std::cerr << "  Tip: Use 'ttdctl tile roadinfo <x> <y>' to find valid orientations\n";
+			return 1;
+		}
+
+		auto result = client.Call("road.buildDepot", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built road depot at tile " << result["tile"].get<int>()
+			          << " facing " << result["direction"].get<std::string>()
+			          << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build depot: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleRoadBuildStop(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl road stop <x> <y> --direction <ne|se|sw|nw> [--type bus|truck] [--drive-through]\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		/* Parse options */
+		for (size_t i = 2; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--direction" && i + 1 < opts.args.size()) {
+				params["direction"] = opts.args[++i];
+			} else if (opts.args[i] == "--type" && i + 1 < opts.args.size()) {
+				params["stop_type"] = opts.args[++i];
+			} else if (opts.args[i] == "--drive-through") {
+				params["drive_through"] = true;
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		if (!params.contains("direction")) {
+			std::cerr << "Error: --direction is required\n";
+			std::cerr << "Usage: ttdctl road stop <x> <y> --direction <ne|se|sw|nw> [--type bus|truck] [--drive-through]\n";
+			return 1;
+		}
+
+		auto result = client.Call("road.buildStop", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built " << result["stop_type"].get<std::string>() << " stop at tile " << result["tile"].get<int>()
+			          << " facing " << result["direction"].get<std::string>();
+			if (result["drive_through"].get<bool>()) {
+				std::cout << " (drive-through)";
+			}
+			std::cout << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build stop: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleRailBuildTrack(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl rail track <x> <y> --track <x|y|upper|lower|left|right> [--end_x X --end_y Y]\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		/* Parse options */
+		for (size_t i = 2; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--track" && i + 1 < opts.args.size()) {
+				params["track"] = opts.args[++i];
+			} else if (opts.args[i] == "--end_x" && i + 1 < opts.args.size()) {
+				params["end_x"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--end_y" && i + 1 < opts.args.size()) {
+				params["end_y"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		if (!params.contains("track")) {
+			std::cerr << "Error: --track is required\n";
+			std::cerr << "Usage: ttdctl rail track <x> <y> --track <x|y|upper|lower|left|right>\n";
+			return 1;
+		}
+
+		auto result = client.Call("rail.buildTrack", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built rail track from tile " << result["start_tile"].get<int>()
+			          << " to " << result["end_tile"].get<int>()
+			          << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build track: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleRailBuildDepot(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl rail depot <x> <y> --direction <ne|se|sw|nw>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		/* Parse options */
+		for (size_t i = 2; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--direction" && i + 1 < opts.args.size()) {
+				params["direction"] = opts.args[++i];
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		if (!params.contains("direction")) {
+			std::cerr << "Error: --direction is required\n";
+			std::cerr << "Usage: ttdctl rail depot <x> <y> --direction <ne|se|sw|nw>\n";
+			return 1;
+		}
+
+		auto result = client.Call("rail.buildDepot", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built rail depot at tile " << result["tile"].get<int>()
+			          << " facing " << result["direction"].get<std::string>()
+			          << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build depot: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleRailBuildStation(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl rail station <x> <y> --axis <x|y> [--platforms N] [--length N]\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		/* Parse options */
+		for (size_t i = 2; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--axis" && i + 1 < opts.args.size()) {
+				params["axis"] = opts.args[++i];
+			} else if (opts.args[i] == "--platforms" && i + 1 < opts.args.size()) {
+				params["platforms"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--length" && i + 1 < opts.args.size()) {
+				params["length"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		if (!params.contains("axis")) {
+			std::cerr << "Error: --axis is required\n";
+			std::cerr << "Usage: ttdctl rail station <x> <y> --axis <x|y> [--platforms N] [--length N]\n";
+			return 1;
+		}
+
+		auto result = client.Call("rail.buildStation", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built " << result["platforms"].get<int>() << "-platform station at tile " << result["tile"].get<int>()
+			          << " (length " << result["length"].get<int>() << ", axis " << result["axis"].get<std::string>() << ")"
+			          << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build station: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	auto opts = ParseArgs(argc, argv);
@@ -1080,6 +1492,24 @@ int main(int argc, char *argv[])
 	} else if (opts.resource == "tile") {
 		if (opts.action == "get" || opts.action.empty()) {
 			return HandleTileGet(client, opts);
+		} else if (opts.action == "roadinfo") {
+			return HandleTileRoadInfo(client, opts);
+		}
+	} else if (opts.resource == "road") {
+		if (opts.action == "build") {
+			return HandleRoadBuild(client, opts);
+		} else if (opts.action == "depot") {
+			return HandleRoadBuildDepot(client, opts);
+		} else if (opts.action == "stop") {
+			return HandleRoadBuildStop(client, opts);
+		}
+	} else if (opts.resource == "rail") {
+		if (opts.action == "track") {
+			return HandleRailBuildTrack(client, opts);
+		} else if (opts.action == "depot") {
+			return HandleRailBuildDepot(client, opts);
+		} else if (opts.action == "station") {
+			return HandleRailBuildStation(client, opts);
 		}
 	} else if (opts.resource == "town") {
 		if (opts.action == "list" || opts.action.empty()) {
