@@ -28,6 +28,9 @@
 #include "../string_func.h"
 #include "../table/strings.h"
 #include "../order_base.h"
+#include "../engine_base.h"
+#include "../engine_func.h"
+#include "../articulated_vehicles.h"
 
 #include "../safeguards.h"
 
@@ -900,6 +903,194 @@ static nlohmann::json HandleMapScan(const nlohmann::json &params)
 	return result;
 }
 
+/**
+ * Handler for engine.list - List available engines.
+ *
+ * Parameters:
+ *   type: Filter by vehicle type ("road", "train", "ship", "aircraft") (optional)
+ *   company: Company ID to check availability for (default: 0)
+ *   buildable_only: Only show engines that can be built (default: true)
+ *
+ * Returns array of engines with details.
+ */
+static nlohmann::json HandleEngineList(const nlohmann::json &params)
+{
+	nlohmann::json result = nlohmann::json::array();
+
+	/* Get company for buildability check */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	bool buildable_only = params.value("buildable_only", true);
+
+	/* Filter by vehicle type */
+	VehicleType filter_type = VEH_INVALID;
+	if (params.contains("type")) {
+		std::string type_str = params["type"].get<std::string>();
+		if (type_str == "road") filter_type = VEH_ROAD;
+		else if (type_str == "train") filter_type = VEH_TRAIN;
+		else if (type_str == "ship") filter_type = VEH_SHIP;
+		else if (type_str == "aircraft") filter_type = VEH_AIRCRAFT;
+	}
+
+	for (const Engine *e : Engine::Iterate()) {
+		if (!e->IsEnabled()) continue;
+		if (filter_type != VEH_INVALID && e->type != filter_type) continue;
+
+		/* Check if buildable for company */
+		bool is_buildable = Company::IsValidID(company) && IsEngineBuildable(e->index, e->type, company);
+		if (buildable_only && !is_buildable) continue;
+
+		nlohmann::json engine_json;
+		engine_json["id"] = e->index.base();
+		engine_json["name"] = StrMakeValid(GetString(STR_ENGINE_NAME, e->index));
+		engine_json["type"] = VehicleTypeToString(e->type);
+		engine_json["buildable"] = is_buildable;
+
+		/* Cost and running cost */
+		engine_json["cost"] = e->GetCost() < 0 ? 0 : e->GetCost().base();
+		engine_json["running_cost"] = e->GetRunningCost() < 0 ? 0 : e->GetRunningCost().base();
+
+		/* Speed */
+		engine_json["max_speed"] = e->GetDisplayMaxSpeed();
+
+		/* Cargo */
+		CargoType cargo = e->GetDefaultCargoType();
+		if (IsValidCargoType(cargo)) {
+			const CargoSpec *cs = CargoSpec::Get(cargo);
+			if (cs != nullptr && cs->IsValid()) {
+				engine_json["cargo_type"] = cargo;
+				engine_json["cargo_name"] = StrMakeValid(GetString(cs->name));
+			}
+		}
+
+		/* Capacity */
+		uint16_t mail_cap = 0;
+		uint capacity = e->GetDisplayDefaultCapacity(&mail_cap);
+		engine_json["capacity"] = capacity;
+		if (mail_cap > 0) {
+			engine_json["mail_capacity"] = mail_cap;
+		}
+
+		/* Reliability */
+		engine_json["reliability"] = e->reliability * 100 / 0x10000;
+
+		/* Power and weight for ground vehicles */
+		if (e->type == VEH_TRAIN || e->type == VEH_ROAD) {
+			engine_json["power"] = e->GetPower();
+			engine_json["weight"] = e->GetDisplayWeight();
+		}
+
+		/* Introduction date */
+		engine_json["intro_date"] = e->intro_date.base();
+
+		/* For trains, indicate if it's a wagon (no power) */
+		if (e->type == VEH_TRAIN) {
+			bool is_wagon = (e->GetPower() == 0);
+			engine_json["is_wagon"] = is_wagon;
+		}
+
+		result.push_back(engine_json);
+	}
+
+	return result;
+}
+
+/**
+ * Handler for engine.get - Get detailed info about a specific engine.
+ *
+ * Parameters:
+ *   id: Engine ID (required)
+ *   company: Company ID to check availability for (default: 0)
+ *
+ * Returns detailed engine information.
+ */
+static nlohmann::json HandleEngineGet(const nlohmann::json &params)
+{
+	if (!params.contains("id")) {
+		throw std::runtime_error("Missing required parameter: id");
+	}
+
+	EngineID eid = static_cast<EngineID>(params["id"].get<int>());
+	const Engine *e = Engine::GetIfValid(eid);
+	if (e == nullptr || !e->IsEnabled()) {
+		throw std::runtime_error("Invalid or unavailable engine ID");
+	}
+
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	bool is_buildable = Company::IsValidID(company) && IsEngineBuildable(e->index, e->type, company);
+
+	nlohmann::json result;
+	result["id"] = e->index.base();
+	result["name"] = StrMakeValid(GetString(STR_ENGINE_NAME, e->index));
+	result["type"] = VehicleTypeToString(e->type);
+	result["buildable"] = is_buildable;
+
+	/* Cost and running cost */
+	result["cost"] = e->GetCost() < 0 ? 0 : e->GetCost().base();
+	result["running_cost"] = e->GetRunningCost() < 0 ? 0 : e->GetRunningCost().base();
+
+	/* Speed */
+	result["max_speed"] = e->GetDisplayMaxSpeed();
+
+	/* Cargo */
+	CargoType cargo = e->GetDefaultCargoType();
+	if (IsValidCargoType(cargo)) {
+		const CargoSpec *cs = CargoSpec::Get(cargo);
+		if (cs != nullptr && cs->IsValid()) {
+			result["cargo_type"] = cargo;
+			result["cargo_name"] = StrMakeValid(GetString(cs->name));
+		}
+	}
+
+	/* Capacity */
+	uint16_t mail_cap = 0;
+	uint capacity = e->GetDisplayDefaultCapacity(&mail_cap);
+	result["capacity"] = capacity;
+	if (mail_cap > 0) {
+		result["mail_capacity"] = mail_cap;
+	}
+
+	/* Reliability */
+	result["reliability"] = e->reliability * 100 / 0x10000;
+	result["reliability_max"] = e->reliability_max * 100 / 0x10000;
+
+	/* Power and weight for ground vehicles */
+	if (e->type == VEH_TRAIN || e->type == VEH_ROAD) {
+		result["power"] = e->GetPower();
+		result["weight"] = e->GetDisplayWeight();
+		result["tractive_effort"] = e->GetDisplayMaxTractiveEffort();
+	}
+
+	/* Life length */
+	result["lifespan_days"] = e->GetLifeLengthInDays().base();
+	result["intro_date"] = e->intro_date.base();
+
+	/* For trains */
+	if (e->type == VEH_TRAIN) {
+		bool is_wagon = (e->GetPower() == 0);
+		result["is_wagon"] = is_wagon;
+	}
+
+	/* Refit capabilities - list cargo types this engine can be refitted to */
+	nlohmann::json refit_cargos = nlohmann::json::array();
+	CargoTypes refit_mask = GetUnionOfArticulatedRefitMasks(e->index, true);
+	for (CargoType ct = 0; ct < NUM_CARGO; ct++) {
+		if (HasBit(refit_mask, ct)) {
+			const CargoSpec *cs = CargoSpec::Get(ct);
+			if (cs != nullptr && cs->IsValid()) {
+				nlohmann::json cargo_json;
+				cargo_json["cargo_type"] = ct;
+				cargo_json["cargo_name"] = StrMakeValid(GetString(cs->name));
+				refit_cargos.push_back(cargo_json);
+			}
+		}
+	}
+	if (!refit_cargos.empty()) {
+		result["refit_cargos"] = refit_cargos;
+	}
+
+	return result;
+}
+
 void RpcRegisterQueryHandlers(RpcServer &server)
 {
 	server.RegisterHandler("ping", HandlePing);
@@ -918,4 +1109,6 @@ void RpcRegisterQueryHandlers(RpcServer &server)
 	server.RegisterHandler("town.list", HandleTownList);
 	server.RegisterHandler("town.get", HandleTownGet);
 	server.RegisterHandler("order.list", HandleOrderList);
+	server.RegisterHandler("engine.list", HandleEngineList);
+	server.RegisterHandler("engine.get", HandleEngineGet);
 }
