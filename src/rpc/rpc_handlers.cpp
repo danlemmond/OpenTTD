@@ -15,6 +15,10 @@
 #include "../timer/timer_game_economy.h"
 #include "../vehicle_base.h"
 #include "../roadveh.h"
+#include "../station_base.h"
+#include "../industry.h"
+#include "../cargotype.h"
+#include "../town.h"
 #include "../strings_func.h"
 #include "../string_func.h"
 #include "../table/strings.h"
@@ -201,6 +205,230 @@ static nlohmann::json HandleVehicleGet(const nlohmann::json &params)
 	return result;
 }
 
+static nlohmann::json HandleStationList(const nlohmann::json &params)
+{
+	nlohmann::json result = nlohmann::json::array();
+
+	CompanyID filter_company = CompanyID::Invalid();
+	if (params.contains("company")) {
+		filter_company = static_cast<CompanyID>(params["company"].get<int>());
+	}
+
+	for (const Station *st : Station::Iterate()) {
+		if (filter_company != CompanyID::Invalid() && st->owner != filter_company) continue;
+
+		nlohmann::json station_json;
+		station_json["id"] = st->index.base();
+		station_json["name"] = StrMakeValid(st->GetCachedName());
+		station_json["owner"] = st->owner != CompanyID::Invalid() ? st->owner.base() : -1;
+		station_json["location"] = {
+			{"tile", st->xy != INVALID_TILE ? st->xy.base() : 0},
+			{"x", TileX(st->xy)},
+			{"y", TileY(st->xy)}
+		};
+
+		nlohmann::json facilities = nlohmann::json::array();
+		if (st->facilities.Test(StationFacility::Train)) facilities.push_back("train");
+		if (st->facilities.Test(StationFacility::TruckStop)) facilities.push_back("truck");
+		if (st->facilities.Test(StationFacility::BusStop)) facilities.push_back("bus");
+		if (st->facilities.Test(StationFacility::Airport)) facilities.push_back("airport");
+		if (st->facilities.Test(StationFacility::Dock)) facilities.push_back("dock");
+		station_json["facilities"] = facilities;
+
+		int total_waiting = 0;
+		for (CargoType c = 0; c < NUM_CARGO; c++) {
+			total_waiting += st->goods[c].TotalCount();
+		}
+		station_json["cargo_waiting_total"] = total_waiting;
+
+		result.push_back(station_json);
+	}
+
+	return result;
+}
+
+static nlohmann::json HandleStationGet(const nlohmann::json &params)
+{
+	if (!params.contains("id")) {
+		throw std::runtime_error("Missing required parameter: id");
+	}
+
+	StationID sid = static_cast<StationID>(params["id"].get<int>());
+	const Station *st = Station::GetIfValid(sid);
+	if (st == nullptr) {
+		throw std::runtime_error("Invalid station ID");
+	}
+
+	nlohmann::json result;
+	result["id"] = st->index.base();
+	result["name"] = StrMakeValid(st->GetCachedName());
+	result["owner"] = st->owner != CompanyID::Invalid() ? st->owner.base() : -1;
+	result["location"] = {
+		{"tile", st->xy != INVALID_TILE ? st->xy.base() : 0},
+		{"x", TileX(st->xy)},
+		{"y", TileY(st->xy)}
+	};
+
+	nlohmann::json facilities = nlohmann::json::array();
+	if (st->facilities.Test(StationFacility::Train)) facilities.push_back("train");
+	if (st->facilities.Test(StationFacility::TruckStop)) facilities.push_back("truck");
+	if (st->facilities.Test(StationFacility::BusStop)) facilities.push_back("bus");
+	if (st->facilities.Test(StationFacility::Airport)) facilities.push_back("airport");
+	if (st->facilities.Test(StationFacility::Dock)) facilities.push_back("dock");
+	result["facilities"] = facilities;
+
+	nlohmann::json cargo_list = nlohmann::json::array();
+	for (CargoType c = 0; c < NUM_CARGO; c++) {
+		const GoodsEntry &ge = st->goods[c];
+		if (!ge.HasRating() && ge.TotalCount() == 0) continue;
+
+		const CargoSpec *cs = CargoSpec::Get(c);
+		if (!cs->IsValid()) continue;
+
+		nlohmann::json cargo_json;
+		cargo_json["cargo_id"] = c;
+		cargo_json["cargo_name"] = StrMakeValid(GetString(cs->name));
+		cargo_json["waiting"] = ge.TotalCount();
+		cargo_json["rating"] = ge.HasRating() ? ge.rating * 100 / 255 : -1;
+		cargo_list.push_back(cargo_json);
+	}
+	result["cargo"] = cargo_list;
+
+	return result;
+}
+
+static nlohmann::json HandleIndustryList(const nlohmann::json &params)
+{
+	nlohmann::json result = nlohmann::json::array();
+
+	int filter_type = -1;
+	if (params.contains("type")) {
+		filter_type = params["type"].get<int>();
+	}
+
+	for (const Industry *ind : Industry::Iterate()) {
+		if (filter_type >= 0 && ind->type != filter_type) continue;
+
+		nlohmann::json industry_json;
+		industry_json["id"] = ind->index.base();
+		industry_json["type"] = ind->type;
+		industry_json["name"] = StrMakeValid(GetString(STR_INDUSTRY_NAME, ind->index));
+		industry_json["location"] = {
+			{"tile", ind->location.tile != INVALID_TILE ? ind->location.tile.base() : 0},
+			{"x", TileX(ind->location.tile)},
+			{"y", TileY(ind->location.tile)}
+		};
+		if (ind->town != nullptr) {
+			industry_json["town"] = StrMakeValid(GetString(STR_TOWN_NAME, ind->town->index));
+		}
+		industry_json["production_level"] = ind->prod_level;
+
+		nlohmann::json produces = nlohmann::json::array();
+		for (const auto &p : ind->produced) {
+			if (!IsValidCargoType(p.cargo)) continue;
+			const CargoSpec *cs = CargoSpec::Get(p.cargo);
+			if (!cs->IsValid()) continue;
+
+			nlohmann::json cargo_json;
+			cargo_json["cargo_id"] = p.cargo;
+			cargo_json["cargo_name"] = StrMakeValid(GetString(cs->name));
+			cargo_json["waiting"] = p.waiting;
+			cargo_json["rate"] = p.rate;
+			if (!p.history.empty()) {
+				cargo_json["last_month_production"] = p.history[0].production;
+				cargo_json["last_month_transported"] = p.history[0].transported;
+			}
+			produces.push_back(cargo_json);
+		}
+		industry_json["produces"] = produces;
+
+		nlohmann::json accepts = nlohmann::json::array();
+		for (const auto &a : ind->accepted) {
+			if (!IsValidCargoType(a.cargo)) continue;
+			const CargoSpec *cs = CargoSpec::Get(a.cargo);
+			if (!cs->IsValid()) continue;
+
+			nlohmann::json cargo_json;
+			cargo_json["cargo_id"] = a.cargo;
+			cargo_json["cargo_name"] = StrMakeValid(GetString(cs->name));
+			cargo_json["waiting"] = a.waiting;
+			accepts.push_back(cargo_json);
+		}
+		industry_json["accepts"] = accepts;
+
+		result.push_back(industry_json);
+	}
+
+	return result;
+}
+
+static nlohmann::json HandleIndustryGet(const nlohmann::json &params)
+{
+	if (!params.contains("id")) {
+		throw std::runtime_error("Missing required parameter: id");
+	}
+
+	IndustryID iid = static_cast<IndustryID>(params["id"].get<int>());
+	const Industry *ind = Industry::GetIfValid(iid);
+	if (ind == nullptr) {
+		throw std::runtime_error("Invalid industry ID");
+	}
+
+	nlohmann::json result;
+	result["id"] = ind->index.base();
+	result["type"] = ind->type;
+	result["name"] = StrMakeValid(GetString(STR_INDUSTRY_NAME, ind->index));
+	result["location"] = {
+		{"tile", ind->location.tile != INVALID_TILE ? ind->location.tile.base() : 0},
+		{"x", TileX(ind->location.tile)},
+		{"y", TileY(ind->location.tile)},
+		{"width", ind->location.w},
+		{"height", ind->location.h}
+	};
+	if (ind->town != nullptr) {
+		result["town"] = StrMakeValid(GetString(STR_TOWN_NAME, ind->town->index));
+	}
+	result["production_level"] = ind->prod_level;
+	result["last_production_year"] = ind->last_prod_year.base();
+	result["stations_nearby"] = static_cast<int>(ind->stations_near.size());
+
+	nlohmann::json produces = nlohmann::json::array();
+	for (const auto &p : ind->produced) {
+		if (!IsValidCargoType(p.cargo)) continue;
+		const CargoSpec *cs = CargoSpec::Get(p.cargo);
+		if (!cs->IsValid()) continue;
+
+		nlohmann::json cargo_json;
+		cargo_json["cargo_id"] = p.cargo;
+		cargo_json["cargo_name"] = StrMakeValid(GetString(cs->name));
+		cargo_json["waiting"] = p.waiting;
+		cargo_json["rate"] = p.rate;
+		if (!p.history.empty()) {
+			cargo_json["last_month_production"] = p.history[0].production;
+			cargo_json["last_month_transported"] = p.history[0].transported;
+			cargo_json["transported_pct"] = p.history[0].PctTransported();
+		}
+		produces.push_back(cargo_json);
+	}
+	result["produces"] = produces;
+
+	nlohmann::json accepts = nlohmann::json::array();
+	for (const auto &a : ind->accepted) {
+		if (!IsValidCargoType(a.cargo)) continue;
+		const CargoSpec *cs = CargoSpec::Get(a.cargo);
+		if (!cs->IsValid()) continue;
+
+		nlohmann::json cargo_json;
+		cargo_json["cargo_id"] = a.cargo;
+		cargo_json["cargo_name"] = StrMakeValid(GetString(cs->name));
+		cargo_json["waiting"] = a.waiting;
+		accepts.push_back(cargo_json);
+	}
+	result["accepts"] = accepts;
+
+	return result;
+}
+
 void RpcRegisterHandlers(RpcServer &server)
 {
 	server.RegisterHandler("ping", HandlePing);
@@ -208,4 +436,8 @@ void RpcRegisterHandlers(RpcServer &server)
 	server.RegisterHandler("company.list", HandleCompanyStatus);
 	server.RegisterHandler("vehicle.list", HandleVehicleList);
 	server.RegisterHandler("vehicle.get", HandleVehicleGet);
+	server.RegisterHandler("station.list", HandleStationList);
+	server.RegisterHandler("station.get", HandleStationGet);
+	server.RegisterHandler("industry.list", HandleIndustryList);
+	server.RegisterHandler("industry.get", HandleIndustryGet);
 }

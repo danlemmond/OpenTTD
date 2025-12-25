@@ -42,14 +42,18 @@ static void PrintUsage()
 	std::cout << "  game                Game status and control\n";
 	std::cout << "  company             Company information\n";
 	std::cout << "  vehicle             Vehicle information\n";
+	std::cout << "  station             Station information\n";
+	std::cout << "  industry            Industry information\n";
 	std::cout << "\nExamples:\n";
 	std::cout << "  ttdctl ping\n";
 	std::cout << "  ttdctl game status\n";
 	std::cout << "  ttdctl company list\n";
-	std::cout << "  ttdctl company list -o json\n";
-	std::cout << "  ttdctl vehicle list\n";
 	std::cout << "  ttdctl vehicle list road\n";
 	std::cout << "  ttdctl vehicle get 42\n";
+	std::cout << "  ttdctl station list\n";
+	std::cout << "  ttdctl station get 5\n";
+	std::cout << "  ttdctl industry list\n";
+	std::cout << "  ttdctl industry get 3\n";
 }
 
 static CliOptions ParseArgs(int argc, char *argv[])
@@ -267,6 +271,195 @@ static int HandleVehicleGet(RpcClient &client, const CliOptions &opts)
 	}
 }
 
+static int HandleStationList(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		auto result = client.Call("station.list", {});
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		if (result.empty()) {
+			std::cout << "No stations found.\n";
+			return 0;
+		}
+
+		std::vector<std::vector<std::string>> rows;
+		rows.push_back({"ID", "Name", "Facilities", "Cargo"});
+
+		for (const auto &s : result) {
+			std::string facilities;
+			for (const auto &f : s["facilities"]) {
+				if (!facilities.empty()) facilities += ",";
+				facilities += f.get<std::string>();
+			}
+			rows.push_back({
+				std::to_string(s["id"].get<int>()),
+				s["name"].get<std::string>(),
+				facilities,
+				std::to_string(s["cargo_waiting_total"].get<int>())
+			});
+		}
+
+		PrintTable(rows);
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleStationGet(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.empty()) {
+			std::cerr << "Error: station ID required\n";
+			std::cerr << "Usage: ttdctl station get <id>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["id"] = std::stoi(opts.args[0]);
+
+		auto result = client.Call("station.get", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << "Station #" << result["id"].get<int>() << "\n";
+		std::cout << "---------------\n";
+		std::cout << "Name:       " << result["name"].get<std::string>() << "\n";
+		std::cout << "Owner:      " << result["owner"].get<int>() << "\n";
+		std::cout << "Location:   (" << result["location"]["x"].get<int>() << ", " << result["location"]["y"].get<int>() << ")\n";
+		std::cout << "Facilities: ";
+		for (size_t i = 0; i < result["facilities"].size(); ++i) {
+			if (i > 0) std::cout << ", ";
+			std::cout << result["facilities"][i].get<std::string>();
+		}
+		std::cout << "\n\nCargo:\n";
+		for (const auto &c : result["cargo"]) {
+			std::cout << "  " << c["cargo_name"].get<std::string>() << ": "
+			          << c["waiting"].get<int>() << " waiting";
+			if (c["rating"].get<int>() >= 0) {
+				std::cout << " (rating: " << c["rating"].get<int>() << "%)";
+			}
+			std::cout << "\n";
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleIndustryList(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		auto result = client.Call("industry.list", {});
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		if (result.empty()) {
+			std::cout << "No industries found.\n";
+			return 0;
+		}
+
+		std::vector<std::vector<std::string>> rows;
+		rows.push_back({"ID", "Name", "Town", "Produces", "Accepts"});
+
+		for (const auto &ind : result) {
+			std::string produces;
+			for (const auto &p : ind["produces"]) {
+				if (!produces.empty()) produces += ", ";
+				produces += p["cargo_name"].get<std::string>();
+			}
+			std::string accepts;
+			for (const auto &a : ind["accepts"]) {
+				if (!accepts.empty()) accepts += ", ";
+				accepts += a["cargo_name"].get<std::string>();
+			}
+			rows.push_back({
+				std::to_string(ind["id"].get<int>()),
+				ind["name"].get<std::string>(),
+				ind.contains("town") ? ind["town"].get<std::string>() : "-",
+				produces.empty() ? "-" : produces,
+				accepts.empty() ? "-" : accepts
+			});
+		}
+
+		PrintTable(rows);
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleIndustryGet(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.empty()) {
+			std::cerr << "Error: industry ID required\n";
+			std::cerr << "Usage: ttdctl industry get <id>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["id"] = std::stoi(opts.args[0]);
+
+		auto result = client.Call("industry.get", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << "Industry #" << result["id"].get<int>() << "\n";
+		std::cout << "---------------\n";
+		std::cout << "Name:       " << result["name"].get<std::string>() << "\n";
+		if (result.contains("town")) {
+			std::cout << "Town:       " << result["town"].get<std::string>() << "\n";
+		}
+		std::cout << "Location:   (" << result["location"]["x"].get<int>() << ", " << result["location"]["y"].get<int>() << ")\n";
+		std::cout << "Size:       " << result["location"]["width"].get<int>() << "x" << result["location"]["height"].get<int>() << "\n";
+		std::cout << "Prod Level: " << result["production_level"].get<int>() << "\n";
+		std::cout << "Stations:   " << result["stations_nearby"].get<int>() << " nearby\n";
+
+		if (!result["produces"].empty()) {
+			std::cout << "\nProduces:\n";
+			for (const auto &p : result["produces"]) {
+				std::cout << "  " << p["cargo_name"].get<std::string>() << ": "
+				          << p["waiting"].get<int>() << " waiting, rate " << p["rate"].get<int>();
+				if (p.contains("last_month_production")) {
+					std::cout << " (last month: " << p["last_month_production"].get<int>()
+					          << " produced, " << p["last_month_transported"].get<int>() << " transported)";
+				}
+				std::cout << "\n";
+			}
+		}
+
+		if (!result["accepts"].empty()) {
+			std::cout << "\nAccepts:\n";
+			for (const auto &a : result["accepts"]) {
+				std::cout << "  " << a["cargo_name"].get<std::string>() << ": "
+				          << a["waiting"].get<int>() << " waiting\n";
+			}
+		}
+
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	auto opts = ParseArgs(argc, argv);
@@ -293,6 +486,18 @@ int main(int argc, char *argv[])
 			return HandleVehicleList(client, opts);
 		} else if (opts.action == "get") {
 			return HandleVehicleGet(client, opts);
+		}
+	} else if (opts.resource == "station") {
+		if (opts.action == "list" || opts.action.empty()) {
+			return HandleStationList(client, opts);
+		} else if (opts.action == "get") {
+			return HandleStationGet(client, opts);
+		}
+	} else if (opts.resource == "industry") {
+		if (opts.action == "list" || opts.action.empty()) {
+			return HandleIndustryList(client, opts);
+		} else if (opts.action == "get") {
+			return HandleIndustryGet(client, opts);
 		}
 	}
 
