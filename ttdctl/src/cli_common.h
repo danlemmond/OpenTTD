@@ -92,6 +92,8 @@ int HandleTileRoadInfo(RpcClient &client, const CliOptions &opts);
 int HandleRoadBuild(RpcClient &client, const CliOptions &opts);
 int HandleRoadBuildDepot(RpcClient &client, const CliOptions &opts);
 int HandleRoadBuildStop(RpcClient &client, const CliOptions &opts);
+int HandleRoadBuildLine(RpcClient &client, const CliOptions &opts);
+int HandleRoadConnect(RpcClient &client, const CliOptions &opts);
 int HandleRailBuildTrack(RpcClient &client, const CliOptions &opts);
 int HandleRailBuildDepot(RpcClient &client, const CliOptions &opts);
 int HandleRailBuildStation(RpcClient &client, const CliOptions &opts);

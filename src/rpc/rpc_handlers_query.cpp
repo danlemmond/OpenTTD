@@ -795,8 +795,8 @@ static nlohmann::json HandleTileGet(const nlohmann::json &params)
 		throw std::runtime_error("Missing required parameter: tile or x/y");
 	}
 
-	if (tile >= Map::Size()) {
-		throw std::runtime_error("Invalid tile index");
+	if (!IsValidTile(tile)) {
+		throw std::runtime_error("Invalid tile index (out of bounds or void tile)");
 	}
 
 	nlohmann::json result;

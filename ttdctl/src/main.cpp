@@ -122,6 +122,10 @@ int main(int argc, char *argv[])
 			return HandleRoadBuildDepot(client, opts);
 		} else if (opts.action == "stop") {
 			return HandleRoadBuildStop(client, opts);
+		} else if (opts.action == "line") {
+			return HandleRoadBuildLine(client, opts);
+		} else if (opts.action == "connect") {
+			return HandleRoadConnect(client, opts);
 		} else if (opts.action == "bridge") {
 			return HandleRoadBuildBridge(client, opts);
 		} else if (opts.action == "tunnel") {

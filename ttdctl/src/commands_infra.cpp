@@ -239,6 +239,113 @@ int HandleRoadBuildStop(RpcClient &client, const CliOptions &opts)
 	}
 }
 
+int HandleRoadBuildLine(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 4) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl road line <start_x> <start_y> <end_x> <end_y> [--one-way] [--road-type <n>]\n";
+			return 1;
+		}
+
+		nlohmann::json params = nlohmann::json::object();
+		params["start_x"] = std::stoi(opts.args[0]);
+		params["start_y"] = std::stoi(opts.args[1]);
+		params["end_x"] = std::stoi(opts.args[2]);
+		params["end_y"] = std::stoi(opts.args[3]);
+
+		/* Parse options */
+		for (size_t i = 4; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--one-way") {
+				params["one_way"] = true;
+			} else if (opts.args[i] == "--road-type" && i + 1 < opts.args.size()) {
+				params["road_type"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		auto result = client.Call("road.buildLine", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Built road from (" << result["start_x"].get<int>() << "," << result["start_y"].get<int>()
+			          << ") to (" << result["end_x"].get<int>() << "," << result["end_y"].get<int>() << ")"
+			          << " along " << result["axis"].get<std::string>() << "-axis"
+			          << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to build road line: " << result["error"].get<std::string>() << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+int HandleRoadConnect(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 4) {
+			std::cerr << "Error: coordinates required\n";
+			std::cerr << "Usage: ttdctl road connect <from_x> <from_y> <to_x> <to_y> [--road-type <n>] [--company <n>]\n";
+			std::cerr << "  Connects two adjacent tiles by building road bits on BOTH tiles.\n";
+			std::cerr << "  Useful for connecting to existing roads (e.g., creating T-junctions).\n";
+			return 1;
+		}
+
+		nlohmann::json params = nlohmann::json::object();
+		params["from_x"] = std::stoi(opts.args[0]);
+		params["from_y"] = std::stoi(opts.args[1]);
+		params["to_x"] = std::stoi(opts.args[2]);
+		params["to_y"] = std::stoi(opts.args[3]);
+
+		/* Parse options */
+		for (size_t i = 4; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--road-type" && i + 1 < opts.args.size()) {
+				params["road_type"] = std::stoi(opts.args[++i]);
+			} else if (opts.args[i] == "--company" && i + 1 < opts.args.size()) {
+				params["company"] = std::stoi(opts.args[++i]);
+			}
+		}
+
+		auto result = client.Call("road.connect", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		bool success = result["success"].get<bool>();
+		if (success) {
+			std::cout << "Connected road from (" << result["from_x"].get<int>() << "," << result["from_y"].get<int>()
+			          << ") to (" << result["to_x"].get<int>() << "," << result["to_y"].get<int>() << ")"
+			          << " direction " << result["direction"].get<std::string>()
+			          << " (cost: " << result["cost"].get<int64_t>() << ")\n";
+		} else {
+			std::cerr << "Failed to connect road";
+			if (result.contains("from_error")) {
+				std::cerr << " - from tile: " << result["from_error"].get<std::string>();
+			}
+			if (result.contains("to_error")) {
+				std::cerr << " - to tile: " << result["to_error"].get<std::string>();
+			}
+			std::cerr << "\n";
+			return 1;
+		}
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
 int HandleRailBuildTrack(RpcClient &client, const CliOptions &opts)
 {
 	try {

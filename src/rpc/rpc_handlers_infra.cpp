@@ -196,8 +196,8 @@ static nlohmann::json HandleTileGetRoadInfo(const nlohmann::json &params)
 		throw std::runtime_error("Missing required parameter: tile or x/y");
 	}
 
-	if (tile >= Map::Size()) {
-		throw std::runtime_error("Invalid tile index");
+	if (!IsValidTile(tile)) {
+		throw std::runtime_error("Invalid tile index (out of bounds or void tile)");
 	}
 
 	nlohmann::json result;
@@ -287,6 +287,8 @@ static nlohmann::json HandleTileGetRoadInfo(const nlohmann::json &params)
 
 /**
  * Handler for road.build - build road pieces on a tile.
+ *
+ * By default, auto-connects to adjacent roads. Set auto_connect=false to disable.
  */
 static nlohmann::json HandleRoadBuild(const nlohmann::json &params)
 {
@@ -298,18 +300,22 @@ static nlohmann::json HandleRoadBuild(const nlohmann::json &params)
 	}
 
 	TileIndex tile;
+	uint tile_x, tile_y;
 	if (params.contains("tile")) {
 		tile = static_cast<TileIndex>(params["tile"].get<uint32_t>());
+		tile_x = TileX(tile);
+		tile_y = TileY(tile);
 	} else {
-		uint x = params["x"].get<uint>();
-		uint y = params["y"].get<uint>();
-		tile = TileXY(x, y);
+		tile_x = params["x"].get<uint>();
+		tile_y = params["y"].get<uint>();
+		tile = TileXY(tile_x, tile_y);
 	}
 
 	RoadBits pieces = ParseRoadBits(params["pieces"]);
 	RoadType rt = static_cast<RoadType>(params.value("road_type", 0));
 	DisallowedRoadDirections drd = DRD_NONE;
 	TownID town_id = TownID::Invalid();
+	bool auto_connect = params.value("auto_connect", true);
 
 	/* Set company context */
 	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
@@ -319,16 +325,104 @@ static nlohmann::json HandleRoadBuild(const nlohmann::json &params)
 	flags.Set(DoCommandFlag::Execute);
 	CommandCost cost = Command<CMD_BUILD_ROAD>::Do(flags, tile, pieces, rt, drd, town_id);
 
-	cur_company.Restore();
+	Money total_cost = cost.GetCost();
+	bool main_success = cost.Succeeded();
 
-	if (cost.Succeeded()) {
+	if (main_success) {
 		RpcRecordActivity(tile, "road.build");
 	}
 
+	/* Auto-connect to adjacent roads if enabled and main build succeeded */
+	nlohmann::json connections = nlohmann::json::array();
+	if (auto_connect && main_success) {
+		/* Check all 4 adjacent tiles for roads that need connecting */
+		struct AdjacentCheck {
+			int dx, dy;
+			RoadBits our_bit;    /* Bit we need on our tile pointing toward adjacent */
+			RoadBits their_bit;  /* Bit they need pointing toward us */
+		};
+		const AdjacentCheck checks[] = {
+			{ 0, -1, ROAD_NW, ROAD_SE },  /* Adjacent tile to NW (y-1) */
+			{ 1,  0, ROAD_NE, ROAD_SW },  /* Adjacent tile to NE (x+1) */
+			{ 0,  1, ROAD_SE, ROAD_NW },  /* Adjacent tile to SE (y+1) */
+			{-1,  0, ROAD_SW, ROAD_NE },  /* Adjacent tile to SW (x-1) */
+		};
+
+		for (const auto &check : checks) {
+			int adj_x = static_cast<int>(tile_x) + check.dx;
+			int adj_y = static_cast<int>(tile_y) + check.dy;
+
+			/* Skip if out of bounds */
+			if (adj_x < 0 || adj_y < 0 ||
+			    static_cast<uint>(adj_x) >= Map::SizeX() ||
+			    static_cast<uint>(adj_y) >= Map::SizeY()) continue;
+
+			TileIndex adj_tile = TileXY(adj_x, adj_y);
+			if (!IsValidTile(adj_tile)) continue;
+
+			/* Check if adjacent tile has road or is a road stop/station */
+			bool has_road = false;
+			RoadBits adj_bits = ROAD_NONE;
+
+			if (IsTileType(adj_tile, MP_ROAD)) {
+				has_road = true;
+				adj_bits = GetRoadBits(adj_tile, RTT_ROAD);
+			} else if (IsTileType(adj_tile, MP_STATION)) {
+				/* Stations (bus/truck stops) can connect */
+				has_road = IsStationRoadStop(adj_tile);
+			}
+
+			if (!has_road) continue;
+
+			/* If adjacent has road bits pointing toward us, or is a station,
+			 * ensure we have bits pointing toward them and they toward us */
+			bool needs_our_bit = !(GetRoadBits(tile, RTT_ROAD) & check.our_bit);
+			bool needs_their_bit = (adj_bits != ROAD_NONE) && !(adj_bits & check.their_bit);
+
+			nlohmann::json conn_result;
+			conn_result["adjacent_x"] = adj_x;
+			conn_result["adjacent_y"] = adj_y;
+			conn_result["direction"] = (check.dx == 0 && check.dy == -1) ? "nw" :
+			                           (check.dx == 1 && check.dy == 0) ? "ne" :
+			                           (check.dx == 0 && check.dy == 1) ? "se" : "sw";
+
+			/* Add our bit if needed */
+			if (needs_our_bit) {
+				CommandCost c = Command<CMD_BUILD_ROAD>::Do(flags, tile, check.our_bit, rt, DRD_NONE, TownID::Invalid());
+				if (c.Succeeded()) {
+					total_cost += c.GetCost();
+					conn_result["our_bit_added"] = true;
+				}
+			}
+
+			/* Add their bit if needed (for road tiles, not stations) */
+			if (needs_their_bit && IsTileType(adj_tile, MP_ROAD)) {
+				CommandCost c = Command<CMD_BUILD_ROAD>::Do(flags, adj_tile, check.their_bit, rt, DRD_NONE, TownID::Invalid());
+				if (c.Succeeded()) {
+					total_cost += c.GetCost();
+					conn_result["their_bit_added"] = true;
+					RpcRecordActivity(adj_tile, "road.build.autoconnect");
+				}
+			}
+
+			if (conn_result.contains("our_bit_added") || conn_result.contains("their_bit_added")) {
+				connections.push_back(conn_result);
+			}
+		}
+	}
+
+	cur_company.Restore();
+
 	nlohmann::json result;
 	result["tile"] = tile.base();
-	result["success"] = cost.Succeeded();
-	result["cost"] = cost.GetCost().base();
+	result["x"] = tile_x;
+	result["y"] = tile_y;
+	result["success"] = main_success;
+	result["cost"] = static_cast<int64_t>(total_cost);
+
+	if (!connections.empty()) {
+		result["auto_connections"] = connections;
+	}
 
 	if (cost.Failed()) {
 		result["error"] = GetCommandErrorMessage(cost);
@@ -461,6 +555,395 @@ static nlohmann::json HandleRoadBuildStop(const nlohmann::json &params)
 }
 
 /**
+ * Handler for road.buildLine - build road from start to end tile.
+ * Uses CMD_BUILD_LONG_ROAD to build along a straight line (horizontal or vertical only).
+ *
+ * Parameters:
+ *   start_x, start_y: Starting coordinates
+ *   end_x, end_y: Ending coordinates
+ *   road_type: Road type (optional, default 0)
+ *   one_way: Build one-way road (optional, default false)
+ *   company: Company ID (optional, default 0)
+ *
+ * Note: Only supports horizontal (same Y) or vertical (same X) lines.
+ */
+static nlohmann::json HandleRoadBuildLine(const nlohmann::json &params)
+{
+	if (!params.contains("start_x") || !params.contains("start_y") ||
+	    !params.contains("end_x") || !params.contains("end_y")) {
+		throw std::runtime_error("Missing required parameters: start_x, start_y, end_x, end_y");
+	}
+
+	uint start_x = params["start_x"].get<uint>();
+	uint start_y = params["start_y"].get<uint>();
+	uint end_x = params["end_x"].get<uint>();
+	uint end_y = params["end_y"].get<uint>();
+
+	if (start_x >= Map::SizeX() || start_y >= Map::SizeY() ||
+	    end_x >= Map::SizeX() || end_y >= Map::SizeY()) {
+		throw std::runtime_error("Coordinates out of bounds");
+	}
+
+	TileIndex start_tile = TileXY(start_x, start_y);
+	TileIndex end_tile = TileXY(end_x, end_y);
+
+	RoadType roadtype = static_cast<RoadType>(params.value("road_type", 0));
+	bool one_way = params.value("one_way", false);
+
+	/* Determine axis based on direction */
+	int dx = (int)end_x - (int)start_x;
+	int dy = (int)end_y - (int)start_y;
+
+	/* CMD_BUILD_LONG_ROAD only supports horizontal or vertical lines */
+	if (dx != 0 && dy != 0) {
+		throw std::runtime_error("road.buildLine only supports horizontal (same Y) or vertical (same X) lines. Use multiple calls for L-shaped routes.");
+	}
+
+	if (dx == 0 && dy == 0) {
+		throw std::runtime_error("Start and end tiles are the same");
+	}
+
+	Axis axis = (dy == 0) ? AXIS_X : AXIS_Y;
+	DisallowedRoadDirections drd = one_way ? DRD_NORTHBOUND : DRD_NONE;
+
+	/* Set company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	/* Build the road line
+	 * Parameters for CMD_BUILD_LONG_ROAD:
+	 * - start_half: false = build full tile at start
+	 * - end_half: true = build full tile at end (important for connecting to existing roads!)
+	 * - is_ai: true = use AI behavior (consistent building without CanConnectToRoad checks)
+	 */
+	CommandCost cost = Command<CMD_BUILD_LONG_ROAD>::Do(flags, end_tile, start_tile, roadtype, axis, drd, false, true, true);
+
+	Money total_cost = cost.GetCost();
+	bool main_success = cost.Succeeded();
+
+	if (main_success) {
+		RpcRecordActivity(start_tile, "road.buildLine");
+		RpcRecordActivity(end_tile, "road.buildLine");
+	}
+
+	/* Auto-connect at endpoints to adjacent roads */
+	nlohmann::json connections = nlohmann::json::array();
+	if (main_success) {
+		/* For each endpoint, check perpendicular directions for adjacent roads */
+		struct EndpointCheck {
+			TileIndex tile;
+			uint x, y;
+			const char *name;
+		};
+		EndpointCheck endpoints[] = {
+			{ start_tile, start_x, start_y, "start" },
+			{ end_tile, end_x, end_y, "end" }
+		};
+
+		/* Directions perpendicular to the line axis */
+		struct AdjacentCheck {
+			int dx, dy;
+			RoadBits our_bit;
+			RoadBits their_bit;
+			const char *dir_name;
+		};
+
+		/* For X-axis lines, check Y directions (NW/SE). For Y-axis, check X directions (NE/SW) */
+		AdjacentCheck x_axis_checks[] = {
+			{ 0, -1, ROAD_NW, ROAD_SE, "nw" },
+			{ 0,  1, ROAD_SE, ROAD_NW, "se" }
+		};
+		AdjacentCheck y_axis_checks[] = {
+			{ 1,  0, ROAD_NE, ROAD_SW, "ne" },
+			{-1,  0, ROAD_SW, ROAD_NE, "sw" }
+		};
+		/* Also check in the direction of the line for connections beyond endpoints */
+		AdjacentCheck start_end_x[] = {
+			{-1,  0, ROAD_SW, ROAD_NE, "sw" },  /* Before start on X axis */
+			{ 1,  0, ROAD_NE, ROAD_SW, "ne" }   /* After end on X axis */
+		};
+		AdjacentCheck start_end_y[] = {
+			{ 0, -1, ROAD_NW, ROAD_SE, "nw" },  /* Before start on Y axis */
+			{ 0,  1, ROAD_SE, ROAD_NW, "se" }   /* After end on Y axis */
+		};
+
+		const AdjacentCheck *perp_checks = (axis == AXIS_X) ? x_axis_checks : y_axis_checks;
+		int perp_count = 2;
+
+		for (auto &ep : endpoints) {
+			/* Check perpendicular directions */
+			for (int i = 0; i < perp_count; i++) {
+				const auto &check = perp_checks[i];
+				int adj_x = static_cast<int>(ep.x) + check.dx;
+				int adj_y = static_cast<int>(ep.y) + check.dy;
+
+				if (adj_x < 0 || adj_y < 0 ||
+				    static_cast<uint>(adj_x) >= Map::SizeX() ||
+				    static_cast<uint>(adj_y) >= Map::SizeY()) continue;
+
+				TileIndex adj_tile = TileXY(adj_x, adj_y);
+				if (!IsValidTile(adj_tile)) continue;
+
+				bool has_road = IsTileType(adj_tile, MP_ROAD) ||
+				                (IsTileType(adj_tile, MP_STATION) && IsStationRoadStop(adj_tile));
+				if (!has_road) continue;
+
+				/* Add connecting bits */
+				RoadBits adj_bits = IsTileType(adj_tile, MP_ROAD) ? GetRoadBits(adj_tile, RTT_ROAD) : ROAD_NONE;
+				RoadBits our_bits = GetRoadBits(ep.tile, RTT_ROAD);
+
+				nlohmann::json conn;
+				conn["endpoint"] = ep.name;
+				conn["adjacent_x"] = adj_x;
+				conn["adjacent_y"] = adj_y;
+				conn["direction"] = check.dir_name;
+
+				if (!(our_bits & check.our_bit)) {
+					CommandCost c = Command<CMD_BUILD_ROAD>::Do(flags, ep.tile, check.our_bit, roadtype, DRD_NONE, TownID::Invalid());
+					if (c.Succeeded()) {
+						total_cost += c.GetCost();
+						conn["our_bit_added"] = true;
+					}
+				}
+
+				if (IsTileType(adj_tile, MP_ROAD) && !(adj_bits & check.their_bit)) {
+					CommandCost c = Command<CMD_BUILD_ROAD>::Do(flags, adj_tile, check.their_bit, roadtype, DRD_NONE, TownID::Invalid());
+					if (c.Succeeded()) {
+						total_cost += c.GetCost();
+						conn["their_bit_added"] = true;
+						RpcRecordActivity(adj_tile, "road.buildLine.autoconnect");
+					}
+				}
+
+				if (conn.contains("our_bit_added") || conn.contains("their_bit_added")) {
+					connections.push_back(conn);
+				}
+			}
+		}
+
+		/* Also check beyond the line endpoints in the direction of travel */
+		const AdjacentCheck *line_checks = (axis == AXIS_X) ? start_end_x : start_end_y;
+
+		/* Check before start */
+		{
+			const auto &check = line_checks[0];
+			int adj_x = static_cast<int>(start_x) + check.dx;
+			int adj_y = static_cast<int>(start_y) + check.dy;
+
+			if (adj_x >= 0 && adj_y >= 0 &&
+			    static_cast<uint>(adj_x) < Map::SizeX() &&
+			    static_cast<uint>(adj_y) < Map::SizeY()) {
+				TileIndex adj_tile = TileXY(adj_x, adj_y);
+				if (IsValidTile(adj_tile) && IsTileType(adj_tile, MP_ROAD)) {
+					RoadBits adj_bits = GetRoadBits(adj_tile, RTT_ROAD);
+					if (!(adj_bits & check.their_bit)) {
+						CommandCost c = Command<CMD_BUILD_ROAD>::Do(flags, adj_tile, check.their_bit, roadtype, DRD_NONE, TownID::Invalid());
+						if (c.Succeeded()) {
+							total_cost += c.GetCost();
+							nlohmann::json conn;
+							conn["endpoint"] = "before_start";
+							conn["adjacent_x"] = adj_x;
+							conn["adjacent_y"] = adj_y;
+							conn["their_bit_added"] = true;
+							connections.push_back(conn);
+							RpcRecordActivity(adj_tile, "road.buildLine.autoconnect");
+						}
+					}
+				}
+			}
+		}
+
+		/* Check after end */
+		{
+			const auto &check = line_checks[1];
+			int adj_x = static_cast<int>(end_x) + check.dx;
+			int adj_y = static_cast<int>(end_y) + check.dy;
+
+			if (adj_x >= 0 && adj_y >= 0 &&
+			    static_cast<uint>(adj_x) < Map::SizeX() &&
+			    static_cast<uint>(adj_y) < Map::SizeY()) {
+				TileIndex adj_tile = TileXY(adj_x, adj_y);
+				if (IsValidTile(adj_tile) && IsTileType(adj_tile, MP_ROAD)) {
+					RoadBits adj_bits = GetRoadBits(adj_tile, RTT_ROAD);
+					if (!(adj_bits & check.their_bit)) {
+						CommandCost c = Command<CMD_BUILD_ROAD>::Do(flags, adj_tile, check.their_bit, roadtype, DRD_NONE, TownID::Invalid());
+						if (c.Succeeded()) {
+							total_cost += c.GetCost();
+							nlohmann::json conn;
+							conn["endpoint"] = "after_end";
+							conn["adjacent_x"] = adj_x;
+							conn["adjacent_y"] = adj_y;
+							conn["their_bit_added"] = true;
+							connections.push_back(conn);
+							RpcRecordActivity(adj_tile, "road.buildLine.autoconnect");
+						}
+					}
+				}
+			}
+		}
+	}
+
+	cur_company.Restore();
+
+	nlohmann::json result;
+	result["start_tile"] = start_tile.base();
+	result["end_tile"] = end_tile.base();
+	result["start_x"] = start_x;
+	result["start_y"] = start_y;
+	result["end_x"] = end_x;
+	result["end_y"] = end_y;
+	result["axis"] = (axis == AXIS_X) ? "x" : "y";
+	result["success"] = main_success;
+	result["cost"] = static_cast<int64_t>(total_cost);
+
+	if (!connections.empty()) {
+		result["auto_connections"] = connections;
+	}
+
+	if (cost.Failed()) {
+		result["error"] = GetCommandErrorMessage(cost);
+	}
+
+	return result;
+}
+
+/**
+ * Handler for road.connect - build road connection between two adjacent tiles.
+ *
+ * This helper automatically builds the correct road bits on BOTH tiles
+ * to form a proper connection. Useful for connecting to existing roads
+ * where you need to add bits to both tiles (e.g., T-junction).
+ *
+ * Parameters:
+ *   from_x, from_y: Source tile coordinates
+ *   to_x, to_y: Target tile coordinates (must be adjacent to source)
+ *   road_type: Road type (optional, default 0)
+ *   company: Company ID (optional, default 0)
+ */
+static nlohmann::json HandleRoadConnect(const nlohmann::json &params)
+{
+	if (!params.contains("from_x") || !params.contains("from_y") ||
+	    !params.contains("to_x") || !params.contains("to_y")) {
+		throw std::runtime_error("Missing required parameters: from_x, from_y, to_x, to_y");
+	}
+
+	uint from_x = params["from_x"].get<uint>();
+	uint from_y = params["from_y"].get<uint>();
+	uint to_x = params["to_x"].get<uint>();
+	uint to_y = params["to_y"].get<uint>();
+
+	if (from_x >= Map::SizeX() || from_y >= Map::SizeY() ||
+	    to_x >= Map::SizeX() || to_y >= Map::SizeY()) {
+		throw std::runtime_error("Coordinates out of bounds");
+	}
+
+	/* Validate tiles are adjacent (Manhattan distance = 1) */
+	int dx = (int)to_x - (int)from_x;
+	int dy = (int)to_y - (int)from_y;
+	if (std::abs(dx) + std::abs(dy) != 1) {
+		throw std::runtime_error("Tiles must be adjacent (Manhattan distance = 1)");
+	}
+
+	TileIndex from_tile = TileXY(from_x, from_y);
+	TileIndex to_tile = TileXY(to_x, to_y);
+
+	RoadType roadtype = static_cast<RoadType>(params.value("road_type", 0));
+
+	/* Determine direction from source to target and the road bits needed */
+	RoadBits from_bits, to_bits;
+	std::string direction;
+	if (dx == 1) {
+		/* Target is to the east (+X direction = SW in OpenTTD) */
+		from_bits = ROAD_SW;
+		to_bits = ROAD_NE;
+		direction = "sw";
+	} else if (dx == -1) {
+		/* Target is to the west (-X direction = NE in OpenTTD) */
+		from_bits = ROAD_NE;
+		to_bits = ROAD_SW;
+		direction = "ne";
+	} else if (dy == 1) {
+		/* Target is to the south (+Y direction = SE in OpenTTD) */
+		from_bits = ROAD_SE;
+		to_bits = ROAD_NW;
+		direction = "se";
+	} else { /* dy == -1 */
+		/* Target is to the north (-Y direction = NW in OpenTTD) */
+		from_bits = ROAD_NW;
+		to_bits = ROAD_SE;
+		direction = "nw";
+	}
+
+	/* Set company context */
+	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
+	Backup<CompanyID> cur_company(_current_company, company);
+
+	DoCommandFlags flags;
+	flags.Set(DoCommandFlag::Execute);
+
+	nlohmann::json result;
+	result["from_tile"] = from_tile.base();
+	result["to_tile"] = to_tile.base();
+	result["from_x"] = from_x;
+	result["from_y"] = from_y;
+	result["to_x"] = to_x;
+	result["to_y"] = to_y;
+	result["direction"] = direction;
+
+	Money total_cost = 0;
+	bool from_success = false;
+	bool to_success = false;
+	std::string from_error, to_error;
+
+	/* Build road bits on the source tile (pointing toward target) */
+	CommandCost cost1 = Command<CMD_BUILD_ROAD>::Do(flags, from_tile, from_bits, roadtype, DRD_NONE, TownID::Invalid());
+	from_success = cost1.Succeeded();
+	if (from_success) {
+		total_cost += cost1.GetCost();
+		RpcRecordActivity(from_tile, "road.connect");
+	} else {
+		from_error = GetCommandErrorMessage(cost1);
+		/* "Already built" is okay - the connection is there */
+		if (from_error.find("already built") != std::string::npos) {
+			from_success = true;
+		}
+	}
+
+	/* Build road bits on the target tile (pointing toward source) */
+	CommandCost cost2 = Command<CMD_BUILD_ROAD>::Do(flags, to_tile, to_bits, roadtype, DRD_NONE, TownID::Invalid());
+	to_success = cost2.Succeeded();
+	if (to_success) {
+		total_cost += cost2.GetCost();
+		RpcRecordActivity(to_tile, "road.connect");
+	} else {
+		to_error = GetCommandErrorMessage(cost2);
+		/* "Already built" is okay - the connection is there */
+		if (to_error.find("already built") != std::string::npos) {
+			to_success = true;
+		}
+	}
+
+	cur_company.Restore();
+
+	result["success"] = from_success && to_success;
+	result["cost"] = static_cast<int64_t>(total_cost);
+	result["from_built"] = from_success;
+	result["to_built"] = to_success;
+
+	if (!from_success && !from_error.empty()) {
+		result["from_error"] = from_error;
+	}
+	if (!to_success && !to_error.empty()) {
+		result["to_error"] = to_error;
+	}
+
+	return result;
+}
+
+/**
  * Handler for rail.buildTrack - build railway track.
  */
 static nlohmann::json HandleRailBuildTrack(const nlohmann::json &params)
@@ -548,12 +1031,30 @@ static nlohmann::json HandleRailBuildDepot(const nlohmann::json &params)
 		tile = TileXY(x, y);
 	}
 
+	if (!IsValidTile(tile)) {
+		throw std::runtime_error("Invalid tile index (out of bounds or void tile)");
+	}
+
 	DiagDirection dir = ParseDiagDirection(params["direction"]);
 	RailType railtype = static_cast<RailType>(params.value("rail_type", 0));
 
 	/* Set company context */
 	CompanyID company = static_cast<CompanyID>(params.value("company", 0));
 	Backup<CompanyID> cur_company(_current_company, company);
+
+	/* First test if the command would succeed, to avoid signal update bugs */
+	DoCommandFlags test_flags;
+	CommandCost test_cost = Command<CMD_BUILD_TRAIN_DEPOT>::Do(test_flags, tile, railtype, dir);
+	if (test_cost.Failed()) {
+		cur_company.Restore();
+		nlohmann::json result;
+		result["tile"] = tile.base();
+		result["direction"] = DiagDirectionToString(dir);
+		result["success"] = false;
+		result["cost"] = 0;
+		result["error"] = GetCommandErrorMessage(test_cost);
+		return result;
+	}
 
 	DoCommandFlags flags;
 	flags.Set(DoCommandFlag::Execute);
@@ -1826,6 +2327,8 @@ void RpcRegisterInfraHandlers(RpcServer &server)
 	server.RegisterHandler("road.build", HandleRoadBuild);
 	server.RegisterHandler("road.buildDepot", HandleRoadBuildDepot);
 	server.RegisterHandler("road.buildStop", HandleRoadBuildStop);
+	server.RegisterHandler("road.buildLine", HandleRoadBuildLine);
+	server.RegisterHandler("road.connect", HandleRoadConnect);
 	server.RegisterHandler("rail.buildTrack", HandleRailBuildTrack);
 	server.RegisterHandler("rail.buildDepot", HandleRailBuildDepot);
 	server.RegisterHandler("rail.buildStation", HandleRailBuildStation);

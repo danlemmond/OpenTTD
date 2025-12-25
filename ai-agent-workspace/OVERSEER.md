@@ -34,6 +34,35 @@ The company value includes cash, loan balance, and asset valuations.
 - Prioritize routes by ROI (return on investment)
 - Plan inter-modal transfer points (e.g., rail to ship, truck to train)
 
+#### Route Analysis Tools
+
+```bash
+# Analyze terrain between two points (for route planning)
+ttdctl map terrain <x1> <y1> <x2> <y2>
+
+# Find nearest industry from a location
+ttdctl industry nearest <x> <y> --produces <cargo>
+ttdctl industry nearest <x> <y> --accepts <cargo>
+
+# Find nearest town from a location
+ttdctl town nearest <x> <y>
+
+# Calculate potential income for a route
+ttdctl cargo income <cargo_type> <distance> <days> [amount]
+
+# Verify a route is connected (assign this to specialists)
+ttdctl route check <from_tile> <to_tile> --type <rail|road|water>
+```
+
+**Terrain Analysis Returns:**
+- Number of tiles between points
+- Water crossings (need bridges)
+- Height variations (may need tunnels)
+- Difficulty rating (easy/medium/hard)
+- Estimated route viability
+
+Use terrain analysis before assigning routes to specialists to ensure they're feasible within budget.
+
 ### 2. Budget Management
 
 You control the company purse. Allocate funds to specialists each round:
@@ -67,26 +96,111 @@ Example Territory Assignment:
 
 ### 4. Camera Management (Streaming Support)
 
-Keep the camera focused on interesting activity:
+**The camera is your window into the action and your connection to viewers.** Keep it focused on interesting activity at all times.
+
+#### Basic Camera Commands
 
 ```bash
-# Jump to a specific location
+# Jump to a specific location (instant teleport)
 ttdctl viewport goto <x> <y>
 
-# Follow a vehicle (great for streams)
+# Follow a vehicle (camera tracks the vehicle automatically)
 ttdctl viewport follow <vehicle_id>
 
-# Stop following
+# Stop following (return to manual control)
 ttdctl viewport follow --stop
 
 # Find where building is happening
 ttdctl activity hotspot
+
+# Reset activity tracking (start fresh)
+ttdctl activity clear
 ```
 
-**Camera Strategy:**
-- During construction: Follow the specialist's activity hotspot
-- During operations: Cycle between busy stations and profitable routes
-- For drama: Follow trains through complex junctions
+#### Camera Strategy by Phase
+
+**During Construction:**
+```bash
+# Find active construction
+ttdctl activity hotspot
+
+# Jump to the action
+ttdctl viewport goto <hotspot_x> <hotspot_y>
+
+# Or follow a specialist's new vehicle
+ttdctl viewport follow <new_vehicle_id>
+```
+
+**During Operations:**
+```bash
+# Follow profitable trains through scenic routes
+ttdctl viewport follow <train_id>
+
+# Jump to busy stations to watch loading
+ttdctl viewport goto <station_x> <station_y>
+
+# Follow aircraft for dramatic long-distance views
+ttdctl viewport follow <aircraft_id>
+```
+
+**For Dramatic Moments:**
+- Follow trains through complex junctions
+- Watch ships navigate coastlines
+- Track aircraft takeoffs and landings
+- Showcase bridge and tunnel approaches
+
+#### Activity Hotspot Usage
+
+The `activity hotspot` command tracks where recent building happened:
+
+```bash
+ttdctl activity hotspot
+```
+
+Returns:
+- Tile coordinates of recent construction
+- Type of activity (road, rail, station, etc.)
+- Timestamp of activity
+
+Use this to:
+1. Jump to where specialists are actively working
+2. Verify construction is happening
+3. Showcase new infrastructure to viewers
+
+**Tip:** Call `ttdctl activity clear` at the start of each round to reset tracking, then use `activity hotspot` to find NEW construction.
+
+#### Camera Rotation Schedule
+
+Suggested rotation for engaging viewers:
+
+| Time | Focus | Why |
+|------|-------|-----|
+| 0:00-0:30 | Construction hotspot | Show building progress |
+| 0:30-1:30 | Follow busiest train | Revenue generation |
+| 1:30-2:30 | Busy station overview | Watch cargo flow |
+| 2:30-3:30 | Follow ship or aircraft | Variety, scenic |
+| 3:30-4:30 | New route being built | Construction action |
+| 4:30-5:00 | Company HQ / Overview | Wrap up round |
+
+#### Finding Interesting Vehicles to Follow
+
+```bash
+# List all trains
+ttdctl vehicle list train
+
+# Find trains that are running (not in depot)
+# Look for state: "running" or "loading"
+ttdctl vehicle get <id>
+
+# Follow the busiest/most profitable
+ttdctl viewport follow <vehicle_id>
+```
+
+**Good vehicles to follow:**
+- Trains on long coal/ore routes (dramatic landscapes)
+- Buses in crowded towns (urban action)
+- Ships on coastal routes (scenic water views)
+- Aircraft on cross-map routes (sense of scale)
 
 ### 5. Progress Monitoring
 
@@ -166,6 +280,30 @@ Each round follows this pattern:
 1. Watch activity via camera controls
 2. Handle any urgent budget requests
 3. Move camera to showcase action
+
+**Monitoring Workflow:**
+```bash
+# At start of monitoring phase
+ttdctl activity clear              # Reset tracking
+
+# Every 30-60 seconds, check for new activity
+ttdctl activity hotspot            # Where are specialists building?
+
+# Jump to the action
+ttdctl viewport goto <x> <y>
+
+# Or follow a vehicle if operations are more interesting
+ttdctl viewport follow <vehicle_id>
+
+# Periodically check for problems
+ttdctl company alerts              # Any warnings?
+```
+
+**What to Watch For:**
+- Construction progress (are specialists actually building?)
+- Vehicle movement (are routes working?)
+- Station activity (is cargo flowing?)
+- Any red alerts or warnings
 
 ### Phase 5: Collection (30 seconds)
 1. Collect specialist reports
@@ -317,6 +455,10 @@ ttdctl industry list
 # Get specific industry details
 ttdctl industry get <id>
 
+# Find nearest matching industry from a starting point
+ttdctl industry nearest <x> <y> --produces coal
+ttdctl industry nearest <x> <y> --accepts goods
+
 # Calculate potential income
 ttdctl cargo income <cargo_type> <distance> <days> [amount]
 
@@ -325,9 +467,34 @@ ttdctl subsidy list
 
 # Find towns needing service
 ttdctl town list
+ttdctl town nearest <x> <y>
 
 # Check what cargo a station accepts/supplies
 ttdctl station coverage <station_id>
+
+# Analyze terrain for route feasibility
+ttdctl map terrain <source_x> <source_y> <dest_x> <dest_y>
+```
+
+**Route Planning Workflow:**
+```bash
+# 1. Find a high-production industry
+ttdctl industry list
+# → Note Coal Mine at (50, 80)
+
+# 2. Find nearest consumer
+ttdctl industry nearest 50 80 --accepts coal
+# → Power Plant at (120, 95)
+
+# 3. Analyze the terrain between them
+ttdctl map terrain 50 80 120 95
+# → Returns: distance, water crossings, height changes, difficulty
+
+# 4. Calculate potential income
+ttdctl cargo income coal 70 5 500
+# → Estimated income for 500 units over 70 tiles in 5 days
+
+# 5. Assign to specialist with budget estimate
 ```
 
 **Station Coverage** returns:
@@ -386,27 +553,42 @@ ttdctl subsidy list              # Available subsidies
 ```bash
 ttdctl map info                  # Map dimensions
 ttdctl map scan                  # ASCII overview
+ttdctl map terrain <x1> <y1> <x2> <y2>  # Analyze terrain between points
+ttdctl map distance <x1> <y1> <x2> <y2> # Calculate distance
+ttdctl tile get <x> <y>          # Detailed tile information
+```
+
+### Industries & Towns
+```bash
 ttdctl industry list             # All industries
 ttdctl industry get <id>         # Industry details
+ttdctl industry nearest <x> <y> [--produces/--accepts <cargo>]  # Find nearby
+ttdctl industry stockpile <id>   # Cargo waiting at industry
+ttdctl industry acceptance <id>  # What industry accepts
 ttdctl town list                 # All towns
 ttdctl town get <id>             # Town details
+ttdctl town nearest <x> <y>      # Find nearest town
 ```
 
 ### Viewport & Camera
 ```bash
-ttdctl viewport goto <x> <y>     # Jump to location
-ttdctl viewport follow <id>      # Follow vehicle
+ttdctl viewport goto <x> <y>     # Jump to location (instant)
+ttdctl viewport follow <id>      # Follow vehicle (auto-track)
 ttdctl viewport follow --stop    # Stop following
-ttdctl activity hotspot          # Find building activity
+ttdctl activity hotspot          # Find recent building activity
 ttdctl activity clear            # Reset activity tracking
 ```
 
-### Status
+### Status & Verification
 ```bash
 ttdctl game status               # Game date/state
-ttdctl vehicle list              # All vehicles
+ttdctl vehicle list [type]       # All vehicles (or by type: train/road/ship/aircraft)
+ttdctl vehicle get <id>          # Vehicle details (state, orders, etc.)
 ttdctl station list              # All stations
+ttdctl station get <id>          # Station details
 ttdctl station coverage <id>     # Station cargo acceptance/supply details
+ttdctl station flow <id>         # Cargo flow through station
+ttdctl route check <tile1> <tile2> --type <rail|road|water>  # Verify connectivity
 ```
 
 ---

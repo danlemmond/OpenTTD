@@ -149,6 +149,52 @@ Deleting infrastructure outside your domain or that you didn't place is a **seri
 2. Explain why the infrastructure needs to move
 3. Wait for the Overseer to coordinate with the appropriate specialist
 
+### Crossing Other Infrastructure Types
+
+**When your route needs to cross another specialist's infrastructure, use LEVEL CROSSINGS or BRIDGES - never delete their infrastructure.**
+
+#### Level Crossings
+
+Rail and road can cross each other by building a **level crossing**:
+
+```bash
+# Rail crossing a road: build rail PERPENDICULAR to the road
+ttdctl rail track <x> <y> --track <perpendicular_to_road>
+
+# Road crossing rail: build road PERPENDICULAR to the rail
+ttdctl road build <x> <y> --pieces <perpendicular_to_rail>
+```
+
+**Requirements:**
+- The crossing must be perpendicular (90 degrees)
+- The existing infrastructure must be a straight section (no junctions, curves, or signals)
+- The tile must be flat
+
+**Example:**
+```bash
+# If road runs north-south (y-axis) at tile (50, 100)
+# Build rail east-west to create a crossing
+ttdctl rail track 50 100 --track x
+
+# If rail runs east-west (x track) at tile (60, 80)
+# Build road north-south to create a crossing
+ttdctl road build 60 80 --pieces y
+```
+
+#### Alternative: Build a Bridge
+
+If a level crossing isn't possible (junction, signals, curves), build a bridge over the obstruction:
+
+```bash
+# Rail bridge over road
+ttdctl rail bridge <start_x> <start_y> <end_x> <end_y>
+
+# Road bridge over rail
+ttdctl road bridge <start_x> <start_y> <end_x> <end_y>
+```
+
+**REMEMBER:** You cannot simply delete another specialist's infrastructure to make room for your route. Use level crossings or bridges to coexist.
+
 ---
 
 ## Rule 4: ttdctl Commands Are Your Interface
@@ -203,14 +249,22 @@ map distance           - Calculate distances
 tile get               - Tile information
 tile roadinfo          - Road orientation
 
-road build             - Build road
+road build             - Build road (single tile)
+road line              - Build straight road line
+road connect           - Connect two adjacent tiles (T-junction)
 road depot             - Build road depot
 road stop              - Build bus/truck stop
+road bridge            - Build road bridge
+road tunnel            - Build road tunnel
 
-rail track             - Build rail track
+rail track             - Build rail track (single/batch)
+rail track-line        - Build track line with corners
 rail depot             - Build rail depot
 rail station           - Build rail station
 rail signal            - Build signals
+rail signal-line       - Place signals along a line
+rail bridge            - Build rail bridge
+rail tunnel            - Build rail tunnel
 
 marine dock            - Build dock
 marine depot           - Build ship depot
@@ -227,6 +281,8 @@ viewport goto          - Move camera
 viewport follow        - Follow vehicle
 activity hotspot       - Find building activity
 activity clear         - Reset activity tracking
+
+route check            - Verify connectivity between tiles
 ```
 
 ### Using Commands

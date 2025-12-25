@@ -506,8 +506,14 @@ static SigSegState UpdateSignalsInBuffer(Owner owner)
 
 			case MP_RAILWAY:
 				if (IsRailDepot(tile)) {
-					/* 'optimization assert' do not try to update signals in other cases */
-					assert(dir == INVALID_DIAGDIR || dir == GetRailDepotDirection(tile));
+					/* Only update signals for depot if direction is valid:
+					 * - INVALID_DIAGDIR means we started from inside the depot
+					 * - dir == depot direction means we entered from the entrance
+					 * Skip update for other directions (can happen with RPC depot building) */
+					if (dir != INVALID_DIAGDIR && dir != GetRailDepotDirection(tile)) {
+						/* Direction doesn't match depot entrance - skip this tile */
+						break;
+					}
 					_tbdset.Add(tile, INVALID_DIAGDIR); // start from depot inside
 					break;
 				}

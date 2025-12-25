@@ -374,6 +374,48 @@ ttdctl tile get 52 100
 # If heights vary or water is found, plan accordingly
 ```
 
+### Level Crossings (Crossing Roads)
+
+**CRITICAL: You cannot delete roads to build rail. Instead, build a LEVEL CROSSING.**
+
+When your rail line needs to cross an existing road:
+
+```bash
+# Build rail across a road to create a level crossing
+ttdctl rail track <x> <y> --track <perpendicular_to_road>
+```
+
+**Requirements for Level Crossings:**
+- The rail must be PERPENDICULAR to the road (crossing at 90 degrees)
+- The road must be straight on that tile (no junctions)
+- The tile must be flat (no slopes)
+- You cannot build parallel to the road on the same tile
+
+**Example:**
+```bash
+# If road runs north-south (y-axis) at tile (50, 100)
+# Build rail east-west (x track) to create a crossing
+ttdctl rail track 50 100 --track x
+```
+
+**What happens:**
+- A level crossing is automatically created
+- Road vehicles will stop when trains pass
+- Both rail and road remain functional
+
+**When Level Crossings Won't Work:**
+- Road is a junction or curve → Find a straight section or build a bridge
+- Terrain is sloped → Level the terrain or go around
+- Too many crossings → Consider building a rail bridge over the road
+
+**Alternative: Build a Rail Bridge Over Road**
+```bash
+# Build elevated rail bridge over road
+ttdctl rail bridge <start_x> <start_y> <end_x> <end_y>
+```
+
+**IMPORTANT:** Level crossings slow down both road and rail traffic. For high-traffic routes, prefer bridges or tunnels to keep traffic flowing smoothly.
+
 ---
 
 ## Removing Infrastructure

@@ -141,7 +141,7 @@ ttdctl route check <start_tile> <end_tile> --type road
 ### Road Construction
 
 ```bash
-# Build road at a tile
+# Build road at a single tile
 ttdctl road build <x> <y> --pieces <type>
 
 # Piece types:
@@ -154,7 +154,24 @@ ttdctl road build <x> <y> --pieces <type>
 #   se   - Southeast direction
 ```
 
-**Building a Road:**
+**Building a Straight Road (Recommended):**
+
+Use `road line` to build straight roads efficiently:
+
+```bash
+# Build a horizontal road from (50,100) to (55,100)
+ttdctl road line 50 100 55 100
+
+# Build a vertical road from (60,50) to (60,60)
+ttdctl road line 60 50 60 60
+
+# With options:
+ttdctl road line <start_x> <start_y> <end_x> <end_y> [--one-way] [--road-type <n>]
+```
+
+**Note:** `road line` only supports straight horizontal (same Y) or vertical (same X) lines. For L-shaped routes, use two calls.
+
+**Tile-by-Tile Building (for complex shapes):**
 
 ```bash
 # Horizontal road from (50,100) to (55,100)
@@ -166,11 +183,27 @@ ttdctl road build 54 100 --pieces x
 ttdctl road build 55 100 --pieces x
 ```
 
-**Building Connections:**
+**Connecting to Existing Roads (T-Junctions):**
+
+When connecting to existing roads (especially city roads), use `road connect` to ensure proper T-junctions:
+
+```bash
+# Connect your road to an existing city road
+ttdctl road connect <your_tile_x> <your_tile_y> <city_road_x> <city_road_y>
+
+# Example: Connect your road at (52,101) to city road at (52,100)
+ttdctl road connect 52 101 52 100
+```
+
+**Why use `road connect`?** When you build road on your tile pointing toward an existing road, you also need to add a connecting bit on the existing road to form a proper T-junction. `road connect` handles both tiles automatically.
+
+**Building Connections (Manual Method):**
+
+If you need fine control, you can manually build T-junctions:
 
 ```bash
 # T-junction at (52,100) - existing horizontal road, add south
-ttdctl road build 52 100 --pieces sw,se  # Add south branches
+ttdctl road build 52 100 --pieces sw,se  # Add south branches to existing road
 ttdctl road build 52 101 --pieces y       # Continue south
 ```
 
@@ -281,6 +314,46 @@ ttdctl tile get 50 100
 ttdctl tile get 51 100
 ttdctl tile get 52 100
 # If heights vary or water is found, plan accordingly
+```
+
+### Level Crossings (Crossing Rail Tracks)
+
+**CRITICAL: You cannot delete rail tracks to build roads. Instead, build a LEVEL CROSSING.**
+
+When your road needs to cross existing rail tracks:
+
+```bash
+# Build road across rail tracks to create a level crossing
+ttdctl road build <x> <y> --pieces <perpendicular_to_rail>
+```
+
+**Requirements for Level Crossings:**
+- The road must be PERPENDICULAR to the rail (crossing at 90 degrees)
+- The rail track must be straight (no junctions, curves, or signals on the crossing tile)
+- The tile must be flat (no slopes)
+- You cannot build parallel to the rail on the same tile
+
+**Example:**
+```bash
+# If rail runs east-west (x-axis) at tile (50, 100)
+# Build road north-south (y-axis) to create a crossing
+ttdctl road build 50 100 --pieces y
+```
+
+**What happens:**
+- A level crossing is automatically created
+- Vehicles will stop when trains pass
+- Both road and rail remain functional
+
+**When Level Crossings Won't Work:**
+- Rail has signals on that tile → Build a bridge over the rail instead
+- Rail is curved or a junction → Find a straight section or use bridge/tunnel
+- Terrain is sloped → Level the terrain or go around
+
+**Alternative: Build a Road Bridge Over Rail**
+```bash
+# Build elevated road bridge over rail tracks
+ttdctl road bridge <start_x> <start_y> <end_x> <end_y>
 ```
 
 ---
@@ -727,7 +800,9 @@ Every 5 minutes, write to `reports/ROUND_<N>_ROAD.md`:
 
 ### Infrastructure
 ```bash
-ttdctl road build <x> <y> --pieces <type>
+ttdctl road build <x> <y> --pieces <type>                   # Build single tile
+ttdctl road line <x1> <y1> <x2> <y2> [--one-way]           # Build straight road
+ttdctl road connect <x1> <y1> <x2> <y2>                     # Connect two adjacent tiles (T-junction)
 ttdctl road stop <x> <y> --direction <dir> --type <bus|truck>
 ttdctl road depot <x> <y> --direction <dir>
 ttdctl road bridge <start_x> <start_y> <end_x> <end_y> [--type <id>]  # Build bridge

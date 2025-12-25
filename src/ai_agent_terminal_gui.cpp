@@ -30,6 +30,9 @@
 
 #include "safeguards.h"
 
+/** Get clipboard contents (platform-specific implementation). */
+std::optional<std::string> GetClipboardContents();
+
 using namespace OpenTTD::Terminal;
 
 /** Default terminal size in characters. */
@@ -406,6 +409,15 @@ struct AIAgentTerminalWindow : Window
 			case WKC_CTRL | 'L':
 				seq = "\x0C";
 				break;
+			case WKC_CTRL | 'V':
+			case WKC_META | 'V': {
+				/* Paste from clipboard. */
+				auto clipboard = GetClipboardContents();
+				if (clipboard.has_value() && !clipboard->empty()) {
+					this->shell_process->Write(*clipboard);
+				}
+				return ES_HANDLED;
+			}
 			default:
 				/* Handle printable characters. */
 				if (key >= 0x20 && key < 0x7F) {
