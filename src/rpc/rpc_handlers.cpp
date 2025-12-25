@@ -732,6 +732,173 @@ static nlohmann::json HandleOrderList(const nlohmann::json &params)
 	return result;
 }
 
+/**
+ * Scan a block of tiles and determine the dominant feature.
+ * Returns a character representing what's in that area.
+ */
+struct ScanBlock {
+	int rail = 0;
+	int road = 0;
+	int water = 0;
+	int station = 0;
+	int industry = 0;
+	int house = 0;
+	int vehicles = 0;
+	int total_tiles = 0;
+};
+
+static char GetBlockSymbol(const ScanBlock &block, bool show_traffic)
+{
+	if (block.total_tiles == 0) return ' ';
+
+	/* If showing traffic and there are vehicles, show density */
+	if (show_traffic && block.vehicles > 0) {
+		if (block.vehicles >= 10) return '#';
+		if (block.vehicles >= 5) return '*';
+		return '0' + std::min(block.vehicles, 9);
+	}
+
+	/* Priority order for infrastructure display */
+	if (block.station > 0) return 'S';
+	if (block.industry > 0) return 'I';
+	if (block.house > 0) return 'T';
+	if (block.rail > 0 && block.road > 0) return 'X';  /* Mixed rail+road */
+	if (block.rail > 0) return 'R';
+	if (block.road > 0) return '+';
+	if (block.water > 0) return '~';
+
+	return '.';
+}
+
+static nlohmann::json HandleMapScan(const nlohmann::json &params)
+{
+	/* Parameters */
+	int origin_x = params.value("x", -1);
+	int origin_y = params.value("y", -1);
+	int zoom = params.value("zoom", 8);  /* Tiles per cell */
+	int grid_size = params.value("size", 16);  /* Grid dimensions */
+	bool show_traffic = params.value("traffic", false);
+	std::string scan_type = params.value("type", "infrastructure");
+
+	/* Clamp values */
+	zoom = std::clamp(zoom, 1, 32);
+	grid_size = std::clamp(grid_size, 4, 32);
+
+	/* Auto-center if no origin specified */
+	if (origin_x < 0 || origin_y < 0) {
+		int total_span = grid_size * zoom;
+		origin_x = std::max(0, static_cast<int>(Map::SizeX() / 2) - total_span / 2);
+		origin_y = std::max(0, static_cast<int>(Map::SizeY() / 2) - total_span / 2);
+	}
+
+	nlohmann::json result;
+	result["origin"] = {{"x", origin_x}, {"y", origin_y}};
+	result["zoom"] = zoom;
+	result["grid_size"] = grid_size;
+	result["scan_type"] = scan_type;
+	result["show_traffic"] = show_traffic;
+
+	/* Build vehicle location map for traffic overlay */
+	std::map<uint32_t, int> vehicle_counts;
+	if (show_traffic) {
+		for (const Vehicle *v : Vehicle::Iterate()) {
+			if (!v->IsPrimaryVehicle()) continue;
+			if (v->tile == INVALID_TILE) continue;
+			uint x = TileX(v->tile);
+			uint y = TileY(v->tile);
+			/* Map to block coordinates */
+			int block_x = (x - origin_x) / zoom;
+			int block_y = (y - origin_y) / zoom;
+			if (block_x >= 0 && block_x < grid_size && block_y >= 0 && block_y < grid_size) {
+				uint32_t key = (block_y << 16) | block_x;
+				vehicle_counts[key]++;
+			}
+		}
+	}
+
+	/* Scan the grid */
+	nlohmann::json rows = nlohmann::json::array();
+	std::map<char, std::string> legend_map;
+
+	for (int gy = 0; gy < grid_size; gy++) {
+		std::string row;
+		for (int gx = 0; gx < grid_size; gx++) {
+			ScanBlock block;
+
+			/* Scan all tiles in this block */
+			for (int dy = 0; dy < zoom; dy++) {
+				for (int dx = 0; dx < zoom; dx++) {
+					int tx = origin_x + gx * zoom + dx;
+					int ty = origin_y + gy * zoom + dy;
+
+					if (tx < 0 || ty < 0 || tx >= (int)Map::SizeX() || ty >= (int)Map::SizeY()) {
+						continue;
+					}
+
+					TileIndex tile = TileXY(tx, ty);
+					block.total_tiles++;
+
+					TileType type = GetTileType(tile);
+					switch (type) {
+						case MP_RAILWAY: block.rail++; break;
+						case MP_ROAD: block.road++; break;
+						case MP_WATER: block.water++; break;
+						case MP_STATION: block.station++; break;
+						case MP_INDUSTRY: block.industry++; break;
+						case MP_HOUSE: block.house++; break;
+						default: break;
+					}
+				}
+			}
+
+			/* Add vehicle count for this block */
+			if (show_traffic) {
+				uint32_t key = (gy << 16) | gx;
+				auto it = vehicle_counts.find(key);
+				if (it != vehicle_counts.end()) {
+					block.vehicles = it->second;
+				}
+			}
+
+			char symbol = GetBlockSymbol(block, show_traffic);
+			row += symbol;
+
+			/* Build legend */
+			if (symbol != '.' && symbol != ' ' && legend_map.find(symbol) == legend_map.end()) {
+				switch (symbol) {
+					case 'R': legend_map[symbol] = "Railway"; break;
+					case '+': legend_map[symbol] = "Road"; break;
+					case 'X': legend_map[symbol] = "Rail+Road junction"; break;
+					case 'S': legend_map[symbol] = "Station"; break;
+					case 'I': legend_map[symbol] = "Industry"; break;
+					case 'T': legend_map[symbol] = "Town"; break;
+					case '~': legend_map[symbol] = "Water"; break;
+					case '#': legend_map[symbol] = "Heavy traffic (10+ vehicles)"; break;
+					case '*': legend_map[symbol] = "Busy (5-9 vehicles)"; break;
+					default:
+						if (symbol >= '1' && symbol <= '9') {
+							legend_map[symbol] = std::string(1, symbol) + " vehicle(s)";
+						}
+						break;
+				}
+			}
+		}
+		rows.push_back(row);
+	}
+
+	result["rows"] = rows;
+
+	/* Build legend array */
+	nlohmann::json legend = nlohmann::json::array();
+	legend.push_back({{"symbol", "."}, {"label", "Empty/clear"}});
+	for (const auto &pair : legend_map) {
+		legend.push_back({{"symbol", std::string(1, pair.first)}, {"label", pair.second}});
+	}
+	result["legend"] = legend;
+
+	return result;
+}
+
 void RpcRegisterHandlers(RpcServer &server)
 {
 	server.RegisterHandler("ping", HandlePing);
@@ -749,4 +916,5 @@ void RpcRegisterHandlers(RpcServer &server)
 	server.RegisterHandler("town.list", HandleTownList);
 	server.RegisterHandler("town.get", HandleTownGet);
 	server.RegisterHandler("order.list", HandleOrderList);
+	server.RegisterHandler("map.scan", HandleMapScan);
 }

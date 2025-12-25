@@ -10,6 +10,7 @@
 #include "rpc_client.h"
 
 #include <iostream>
+#include <iomanip>
 #include <string>
 #include <vector>
 #include <cstring>
@@ -60,6 +61,7 @@ static void PrintUsage()
 	std::cout << "  ttdctl industry get 3\n";
 	std::cout << "  ttdctl map info\n";
 	std::cout << "  ttdctl map distance 100 100 200 200\n";
+	std::cout << "  ttdctl map scan [--traffic] [--zoom N]\n";
 	std::cout << "  ttdctl tile get 100 100\n";
 	std::cout << "  ttdctl town list\n";
 	std::cout << "  ttdctl town get 0\n";
@@ -709,6 +711,91 @@ static int HandleOrderList(RpcClient &client, const CliOptions &opts)
 	}
 }
 
+static int HandleMapScan(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		nlohmann::json params;
+
+		/* Parse options from args */
+		bool show_traffic = false;
+		int zoom = 8;
+
+		for (size_t i = 0; i < opts.args.size(); ++i) {
+			if (opts.args[i] == "--traffic" || opts.args[i] == "-t") {
+				show_traffic = true;
+			} else if ((opts.args[i] == "--zoom" || opts.args[i] == "-z") && i + 1 < opts.args.size()) {
+				zoom = std::stoi(opts.args[++i]);
+			}
+		}
+
+		params["traffic"] = show_traffic;
+		params["zoom"] = zoom;
+
+		auto result = client.Call("map.scan", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		/* Print header */
+		int origin_x = result["origin"]["x"].get<int>();
+		int origin_y = result["origin"]["y"].get<int>();
+		int grid_size = result["grid_size"].get<int>();
+		int actual_zoom = result["zoom"].get<int>();
+
+		std::cout << "Map Scan";
+		if (result["show_traffic"].get<bool>()) {
+			std::cout << " (traffic overlay)";
+		}
+		std::cout << "\n";
+		std::cout << "Origin: (" << origin_x << ", " << origin_y << ")  ";
+		std::cout << "Zoom: " << actual_zoom << "x (" << actual_zoom << " tiles/cell)  ";
+		std::cout << "Coverage: " << (grid_size * actual_zoom) << "x" << (grid_size * actual_zoom) << " tiles\n\n";
+
+		/* Print column headers */
+		std::cout << "     ";
+		for (int col = 0; col < grid_size; ++col) {
+			if (col % 4 == 0) {
+				int x = origin_x + col * actual_zoom;
+				std::cout << std::setw(4) << x;
+			} else {
+				std::cout << "    ";
+			}
+		}
+		std::cout << "  X\n";
+
+		/* Print grid */
+		const auto &rows = result["rows"];
+		for (size_t i = 0; i < rows.size(); ++i) {
+			int y = origin_y + static_cast<int>(i) * actual_zoom;
+			if (i % 4 == 0) {
+				std::cout << std::setw(4) << y << " ";
+			} else {
+				std::cout << "     ";
+			}
+
+			std::string row = rows[i].get<std::string>();
+			for (char c : row) {
+				std::cout << "  " << c << " ";
+			}
+			std::cout << "\n";
+		}
+		std::cout << "Y\n\n";
+
+		/* Print legend */
+		std::cout << "Legend:\n";
+		for (const auto &entry : result["legend"]) {
+			std::cout << "  " << entry["symbol"].get<std::string>() << " = " << entry["label"].get<std::string>() << "\n";
+		}
+
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	auto opts = ParseArgs(argc, argv);
@@ -753,6 +840,8 @@ int main(int argc, char *argv[])
 			return HandleMapInfo(client, opts);
 		} else if (opts.action == "distance") {
 			return HandleMapDistance(client, opts);
+		} else if (opts.action == "scan") {
+			return HandleMapScan(client, opts);
 		}
 	} else if (opts.resource == "tile") {
 		if (opts.action == "get" || opts.action.empty()) {
