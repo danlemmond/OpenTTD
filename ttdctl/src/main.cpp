@@ -44,6 +44,9 @@ static void PrintUsage()
 	std::cout << "  vehicle             Vehicle information\n";
 	std::cout << "  station             Station information\n";
 	std::cout << "  industry            Industry information\n";
+	std::cout << "  map                 Map information and distance\n";
+	std::cout << "  tile                Tile information\n";
+	std::cout << "  town                Town information\n";
 	std::cout << "\nExamples:\n";
 	std::cout << "  ttdctl ping\n";
 	std::cout << "  ttdctl game status\n";
@@ -54,6 +57,11 @@ static void PrintUsage()
 	std::cout << "  ttdctl station get 5\n";
 	std::cout << "  ttdctl industry list\n";
 	std::cout << "  ttdctl industry get 3\n";
+	std::cout << "  ttdctl map info\n";
+	std::cout << "  ttdctl map distance 100 100 200 200\n";
+	std::cout << "  ttdctl tile get 100 100\n";
+	std::cout << "  ttdctl town list\n";
+	std::cout << "  ttdctl town get 0\n";
 }
 
 static CliOptions ParseArgs(int argc, char *argv[])
@@ -460,6 +468,182 @@ static int HandleIndustryGet(RpcClient &client, const CliOptions &opts)
 	}
 }
 
+static int HandleMapInfo(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		auto result = client.Call("map.info", {});
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << "Map Information\n";
+		std::cout << "---------------\n";
+		std::cout << "Size:    " << result["size_x"].get<int>() << " x " << result["size_y"].get<int>() << "\n";
+		std::cout << "Tiles:   " << result["size_total"].get<int>() << "\n";
+		std::cout << "Climate: " << result["climate"].get<std::string>() << "\n";
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleMapDistance(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 4) {
+			std::cerr << "Error: requires 4 coordinates: x1 y1 x2 y2\n";
+			std::cerr << "Usage: ttdctl map distance <x1> <y1> <x2> <y2>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x1"] = std::stoi(opts.args[0]);
+		params["y1"] = std::stoi(opts.args[1]);
+		params["x2"] = std::stoi(opts.args[2]);
+		params["y2"] = std::stoi(opts.args[3]);
+
+		auto result = client.Call("map.distance", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << "Distance from (" << opts.args[0] << "," << opts.args[1]
+		          << ") to (" << opts.args[2] << "," << opts.args[3] << "):\n";
+		std::cout << "  Manhattan: " << result["manhattan"].get<int>() << " tiles\n";
+		std::cout << "  Max:       " << result["max"].get<int>() << " tiles\n";
+		std::cout << "  Square:    " << result["square"].get<int>() << "\n";
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleTileGet(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.size() < 2) {
+			std::cerr << "Error: requires coordinates: x y\n";
+			std::cerr << "Usage: ttdctl tile get <x> <y>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["x"] = std::stoi(opts.args[0]);
+		params["y"] = std::stoi(opts.args[1]);
+
+		auto result = client.Call("tile.get", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << "Tile at (" << result["x"].get<int>() << ", " << result["y"].get<int>() << ")\n";
+		std::cout << "---------------\n";
+		std::cout << "Tile ID: " << result["tile"].get<int>() << "\n";
+		std::cout << "Type:    " << result["type"].get<std::string>() << "\n";
+		std::cout << "Height:  " << result["height"].get<int>() << "\n";
+		std::cout << "Flat:    " << (result["is_flat"].get<bool>() ? "Yes" : "No") << "\n";
+		int owner = result["owner"].get<int>();
+		std::cout << "Owner:   " << (owner >= 0 ? std::to_string(owner) : "None") << "\n";
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleTownList(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		auto result = client.Call("town.list", {});
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		if (result.empty()) {
+			std::cout << "No towns found.\n";
+			return 0;
+		}
+
+		std::vector<std::vector<std::string>> rows;
+		rows.push_back({"ID", "Name", "Population", "Houses", "City", "Location"});
+
+		for (const auto &t : result) {
+			rows.push_back({
+				std::to_string(t["id"].get<int>()),
+				t["name"].get<std::string>(),
+				std::to_string(t["population"].get<int>()),
+				std::to_string(t["houses"].get<int>()),
+				t["is_city"].get<bool>() ? "Yes" : "No",
+				"(" + std::to_string(t["location"]["x"].get<int>()) + "," + std::to_string(t["location"]["y"].get<int>()) + ")"
+			});
+		}
+
+		PrintTable(rows);
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
+static int HandleTownGet(RpcClient &client, const CliOptions &opts)
+{
+	try {
+		if (opts.args.empty()) {
+			std::cerr << "Error: town ID required\n";
+			std::cerr << "Usage: ttdctl town get <id>\n";
+			return 1;
+		}
+
+		nlohmann::json params;
+		params["id"] = std::stoi(opts.args[0]);
+
+		auto result = client.Call("town.get", params);
+
+		if (opts.json_output) {
+			std::cout << result.dump(2) << "\n";
+			return 0;
+		}
+
+		std::cout << "Town #" << result["id"].get<int>() << "\n";
+		std::cout << "---------------\n";
+		std::cout << "Name:       " << result["name"].get<std::string>() << "\n";
+		std::cout << "Population: " << result["population"].get<int>() << "\n";
+		std::cout << "Houses:     " << result["houses"].get<int>() << "\n";
+		std::cout << "City:       " << (result["is_city"].get<bool>() ? "Yes" : "No") << "\n";
+		std::cout << "Location:   (" << result["location"]["x"].get<int>() << ", " << result["location"]["y"].get<int>() << ")\n";
+
+		int growth_rate = result["growth_rate"].get<int>();
+		if (growth_rate >= 0) {
+			std::cout << "Growth:     Every " << growth_rate << " days\n";
+		} else {
+			std::cout << "Growth:     Not growing\n";
+		}
+
+		if (!result["ratings"].empty()) {
+			std::cout << "\nCompany Ratings:\n";
+			for (const auto &r : result["ratings"]) {
+				std::cout << "  Company " << r["company"].get<int>() << ": " << r["rating"].get<int>() << "\n";
+			}
+		}
+
+		return 0;
+	} catch (const std::exception &e) {
+		std::cerr << "Error: " << e.what() << "\n";
+		return 1;
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	auto opts = ParseArgs(argc, argv);
@@ -498,6 +682,22 @@ int main(int argc, char *argv[])
 			return HandleIndustryList(client, opts);
 		} else if (opts.action == "get") {
 			return HandleIndustryGet(client, opts);
+		}
+	} else if (opts.resource == "map") {
+		if (opts.action == "info" || opts.action.empty()) {
+			return HandleMapInfo(client, opts);
+		} else if (opts.action == "distance") {
+			return HandleMapDistance(client, opts);
+		}
+	} else if (opts.resource == "tile") {
+		if (opts.action == "get" || opts.action.empty()) {
+			return HandleTileGet(client, opts);
+		}
+	} else if (opts.resource == "town") {
+		if (opts.action == "list" || opts.action.empty()) {
+			return HandleTownList(client, opts);
+		} else if (opts.action == "get") {
+			return HandleTownGet(client, opts);
 		}
 	}
 

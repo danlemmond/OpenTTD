@@ -19,6 +19,10 @@
 #include "../industry.h"
 #include "../cargotype.h"
 #include "../town.h"
+#include "../map_func.h"
+#include "../tile_map.h"
+#include "../landscape.h"
+#include "../settings_type.h"
 #include "../strings_func.h"
 #include "../string_func.h"
 #include "../table/strings.h"
@@ -429,6 +433,175 @@ static nlohmann::json HandleIndustryGet(const nlohmann::json &params)
 	return result;
 }
 
+static const char *LandscapeToString(LandscapeType landscape)
+{
+	switch (landscape) {
+		case LandscapeType::Temperate: return "temperate";
+		case LandscapeType::Arctic: return "arctic";
+		case LandscapeType::Tropic: return "tropic";
+		case LandscapeType::Toyland: return "toyland";
+		default: return "unknown";
+	}
+}
+
+static const char *TileTypeToString(TileType type)
+{
+	switch (type) {
+		case MP_CLEAR: return "clear";
+		case MP_RAILWAY: return "railway";
+		case MP_ROAD: return "road";
+		case MP_HOUSE: return "house";
+		case MP_TREES: return "trees";
+		case MP_INDUSTRY: return "industry";
+		case MP_STATION: return "station";
+		case MP_WATER: return "water";
+		case MP_VOID: return "void";
+		case MP_OBJECT: return "object";
+		case MP_TUNNELBRIDGE: return "tunnelbridge";
+		default: return "unknown";
+	}
+}
+
+static nlohmann::json HandleMapInfo([[maybe_unused]] const nlohmann::json &params)
+{
+	nlohmann::json result;
+	result["size_x"] = Map::SizeX();
+	result["size_y"] = Map::SizeY();
+	result["size_total"] = Map::Size();
+	result["max_x"] = Map::MaxX();
+	result["max_y"] = Map::MaxY();
+	result["climate"] = LandscapeToString(_settings_game.game_creation.landscape);
+	return result;
+}
+
+static nlohmann::json HandleMapDistance(const nlohmann::json &params)
+{
+	TileIndex tile1, tile2;
+
+	if (params.contains("tile1") && params.contains("tile2")) {
+		tile1 = static_cast<TileIndex>(params["tile1"].get<uint32_t>());
+		tile2 = static_cast<TileIndex>(params["tile2"].get<uint32_t>());
+	} else if (params.contains("x1") && params.contains("y1") &&
+	           params.contains("x2") && params.contains("y2")) {
+		uint x1 = params["x1"].get<uint>();
+		uint y1 = params["y1"].get<uint>();
+		uint x2 = params["x2"].get<uint>();
+		uint y2 = params["y2"].get<uint>();
+		tile1 = TileXY(x1, y1);
+		tile2 = TileXY(x2, y2);
+	} else {
+		throw std::runtime_error("Missing required parameters: tile1/tile2 or x1/y1/x2/y2");
+	}
+
+	nlohmann::json result;
+	result["manhattan"] = DistanceManhattan(tile1, tile2);
+	result["max"] = DistanceMax(tile1, tile2);
+	result["square"] = DistanceSquare(tile1, tile2);
+	return result;
+}
+
+static nlohmann::json HandleTileGet(const nlohmann::json &params)
+{
+	TileIndex tile;
+
+	if (params.contains("tile")) {
+		tile = static_cast<TileIndex>(params["tile"].get<uint32_t>());
+	} else if (params.contains("x") && params.contains("y")) {
+		uint x = params["x"].get<uint>();
+		uint y = params["y"].get<uint>();
+		if (x >= Map::SizeX() || y >= Map::SizeY()) {
+			throw std::runtime_error("Coordinates out of bounds");
+		}
+		tile = TileXY(x, y);
+	} else {
+		throw std::runtime_error("Missing required parameter: tile or x/y");
+	}
+
+	if (tile >= Map::Size()) {
+		throw std::runtime_error("Invalid tile index");
+	}
+
+	nlohmann::json result;
+	result["tile"] = tile.base();
+	result["x"] = TileX(tile);
+	result["y"] = TileY(tile);
+	result["type"] = TileTypeToString(GetTileType(tile));
+	result["height"] = TileHeight(tile);
+
+	Slope slope = GetTileSlope(tile);
+	result["slope"] = static_cast<int>(slope);
+	result["is_flat"] = (slope == SLOPE_FLAT);
+
+	Owner owner = GetTileOwner(tile);
+	result["owner"] = owner != INVALID_OWNER ? owner.base() : -1;
+
+	return result;
+}
+
+static nlohmann::json HandleTownList([[maybe_unused]] const nlohmann::json &params)
+{
+	nlohmann::json result = nlohmann::json::array();
+
+	for (const Town *t : Town::Iterate()) {
+		nlohmann::json town_json;
+		town_json["id"] = t->index.base();
+		town_json["name"] = StrMakeValid(GetString(STR_TOWN_NAME, t->index));
+		town_json["location"] = {
+			{"tile", t->xy != INVALID_TILE ? t->xy.base() : 0},
+			{"x", TileX(t->xy)},
+			{"y", TileY(t->xy)}
+		};
+		town_json["population"] = t->cache.population;
+		town_json["houses"] = t->cache.num_houses;
+		town_json["is_city"] = t->larger_town;
+
+		result.push_back(town_json);
+	}
+
+	return result;
+}
+
+static nlohmann::json HandleTownGet(const nlohmann::json &params)
+{
+	if (!params.contains("id")) {
+		throw std::runtime_error("Missing required parameter: id");
+	}
+
+	TownID tid = static_cast<TownID>(params["id"].get<int>());
+	const Town *t = Town::GetIfValid(tid);
+	if (t == nullptr) {
+		throw std::runtime_error("Invalid town ID");
+	}
+
+	nlohmann::json result;
+	result["id"] = t->index.base();
+	result["name"] = StrMakeValid(GetString(STR_TOWN_NAME, t->index));
+	result["location"] = {
+		{"tile", t->xy != INVALID_TILE ? t->xy.base() : 0},
+		{"x", TileX(t->xy)},
+		{"y", TileY(t->xy)}
+	};
+	result["population"] = t->cache.population;
+	result["houses"] = t->cache.num_houses;
+	result["is_city"] = t->larger_town;
+	result["growth_rate"] = t->growth_rate != TOWN_GROWTH_RATE_NONE ? static_cast<int>(t->growth_rate) : -1;
+	result["fund_buildings_months"] = t->fund_buildings_months;
+
+	/* Company ratings with this town */
+	nlohmann::json ratings = nlohmann::json::array();
+	for (const Company *c : Company::Iterate()) {
+		if (t->have_ratings.Test(c->index)) {
+			nlohmann::json rating_json;
+			rating_json["company"] = c->index.base();
+			rating_json["rating"] = t->ratings[c->index];
+			ratings.push_back(rating_json);
+		}
+	}
+	result["ratings"] = ratings;
+
+	return result;
+}
+
 void RpcRegisterHandlers(RpcServer &server)
 {
 	server.RegisterHandler("ping", HandlePing);
@@ -440,4 +613,9 @@ void RpcRegisterHandlers(RpcServer &server)
 	server.RegisterHandler("station.get", HandleStationGet);
 	server.RegisterHandler("industry.list", HandleIndustryList);
 	server.RegisterHandler("industry.get", HandleIndustryGet);
+	server.RegisterHandler("map.info", HandleMapInfo);
+	server.RegisterHandler("map.distance", HandleMapDistance);
+	server.RegisterHandler("tile.get", HandleTileGet);
+	server.RegisterHandler("town.list", HandleTownList);
+	server.RegisterHandler("town.get", HandleTownGet);
 }
