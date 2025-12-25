@@ -45,6 +45,7 @@
 #include "3rdparty/fmt/chrono.h"
 #include "company_cmd.h"
 #include "misc_cmd.h"
+#include "ai_agent_terminal_gui.h"
 
 #if defined(WITH_ZLIB)
 #include "network/network_content.h"
@@ -2689,6 +2690,22 @@ static bool ConFramerateWindow(std::span<std::string_view> argv)
 	return true;
 }
 
+static bool ConAIAgentTerminal(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "Open the AI Agent terminal window.");
+		return true;
+	}
+
+	if (_network_dedicated) {
+		IConsolePrint(CC_ERROR, "Can not open AI Agent terminal on a dedicated server.");
+		return false;
+	}
+
+	ShowAIAgentTerminalWindow();
+	return true;
+}
+
 /**
  * Format a label as a string.
  * If all elements are visible ASCII (excluding space) then the label will be formatted as a string of 4 characters,
@@ -3011,4 +3028,7 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("newgrf_profile",          ConNewGRFProfile,    ConHookNewGRFDeveloperTool);
 
 	IConsole::CmdRegister("dump_info",               ConDumpInfo);
+
+	/* AI Agent terminal */
+	IConsole::CmdRegister("ai_agent",                ConAIAgentTerminal);
 }

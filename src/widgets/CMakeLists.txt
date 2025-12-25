@@ -1,4 +1,5 @@
 add_files(
+    ai_agent_terminal_widget.h
     ai_widget.h
     airport_widget.h
     autoreplace_widget.h

@@ -157,6 +157,7 @@ if(APPLE)
     enable_language(OBJCXX)
 
     find_package(Iconv)
+    find_package(Vterm)
 
     find_library(AUDIOTOOLBOX_LIBRARY AudioToolbox)
     find_library(AUDIOUNIT_LIBRARY AudioUnit)
@@ -343,6 +344,7 @@ include(3rdparty/llvm/CheckAtomic)
 
 if(APPLE)
     link_package(Iconv TARGET Iconv::Iconv)
+    link_package(Vterm TARGET Vterm::Vterm)
 
     target_link_libraries(openttd_lib
         ${AUDIOTOOLBOX_LIBRARY}

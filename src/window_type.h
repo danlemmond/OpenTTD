@@ -732,6 +732,12 @@ enum WindowClass : uint16_t {
 	 */
 	WC_HELPWIN,
 
+	/**
+	 * AI Agent terminal window; %Window numbers:
+	 *   - 0 = #AIAgentTerminalWidgets
+	 */
+	WC_AI_AGENT_TERMINAL,
+
 	WC_INVALID = 0xFFFF, ///< Invalid window.
 };
 

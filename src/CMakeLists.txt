@@ -25,6 +25,7 @@ add_subdirectory(saveload)
 add_subdirectory(sound)
 add_subdirectory(spriteloader)
 add_subdirectory(table)
+add_subdirectory(terminal)
 add_subdirectory(tests)
 add_subdirectory(timer)
 add_subdirectory(video)
@@ -52,6 +53,8 @@ add_files(
 )
 
 add_files(
+    ai_agent_terminal_gui.cpp
+    ai_agent_terminal_gui.h
     aircraft.h
     aircraft_cmd.cpp
     aircraft_cmd.h
